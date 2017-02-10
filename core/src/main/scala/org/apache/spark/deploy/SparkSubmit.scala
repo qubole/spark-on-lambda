@@ -70,7 +70,8 @@ object SparkSubmit {
   private val STANDALONE = 2
   private val MESOS = 4
   private val LOCAL = 8
-  private val ALL_CLUSTER_MGRS = YARN | STANDALONE | MESOS | LOCAL
+  private val LAMBDA = 16
+  private val ALL_CLUSTER_MGRS = YARN | STANDALONE | MESOS | LOCAL | LAMBDA
 
   // Deploy modes
   private val CLIENT = 1
@@ -240,6 +241,7 @@ object SparkSubmit {
       case m if m.startsWith("spark") => STANDALONE
       case m if m.startsWith("mesos") => MESOS
       case m if m.startsWith("local") => LOCAL
+      case m if m.startsWith("lambda") => LAMBDA
       case _ =>
         printErrorAndExit("Master must either be yarn or start with spark, mesos, local")
         -1

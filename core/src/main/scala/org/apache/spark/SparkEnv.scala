@@ -337,8 +337,15 @@ object SparkEnv extends Logging {
     }
 
     val blockTransferService =
-      new NettyBlockTransferService(conf, securityManager, bindAddress, advertiseAddress,
-        blockManagerPort, numUsableCores)
+      if (isDriver) {
+        new NettyBlockTransferService(conf, securityManager, bindAddress, advertiseAddress,
+          blockManagerPort, numUsableCores)
+      } else {
+        logInfo(s"LAMBDA: 13000: SparkEnv: $bindAddress")
+        logInfo(s"LAMBDA: 13001: SparkEnv: $advertiseAddress")
+        new NettyBlockTransferService(conf, securityManager, "localhost", "localhost",
+          blockManagerPort, numUsableCores)
+      }
 
     val blockManagerMaster = new BlockManagerMaster(registerOrLookupEndpoint(
       BlockManagerMaster.DRIVER_ENDPOINT_NAME,

@@ -110,7 +110,7 @@ private[ui] class JobPage(parent: JobsTab) extends WebUIPage("job") {
              |}
            """.stripMargin
         events += addedEvent
-
+      case e: SparkListenerExecutorLambdaDetails =>
       case e: SparkListenerExecutorRemoved =>
         val removedEvent =
           s"""

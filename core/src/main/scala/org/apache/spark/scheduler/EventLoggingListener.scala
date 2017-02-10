@@ -132,6 +132,7 @@ private[spark] class EventLoggingListener(
   /** Log the event as JSON. */
   private def logEvent(event: SparkListenerEvent, flushLogger: Boolean = false) {
     val eventJson = JsonProtocol.sparkEventToJson(event)
+    logInfo(s"LAMBDA: 16000: $event")
     // scalastyle:off println
     writer.foreach(_.println(compact(render(eventJson))))
     // scalastyle:on println
@@ -184,10 +185,17 @@ private[spark] class EventLoggingListener(
     logEvent(event, flushLogger = true)
   }
   override def onExecutorAdded(event: SparkListenerExecutorAdded): Unit = {
+    logInfo("LAMBDA: 4005: onExecutorAdded")
+    logEvent(event, flushLogger = true)
+  }
+
+  override def onExecutorLambdaDetails(event: SparkListenerExecutorLambdaDetails): Unit = {
+    logInfo("LAMBDA: 4005.1: onExecutorLambdaDetails")
     logEvent(event, flushLogger = true)
   }
 
   override def onExecutorRemoved(event: SparkListenerExecutorRemoved): Unit = {
+    logInfo("LAMBDA: 4005.2: onExecutorRemoved")
     logEvent(event, flushLogger = true)
   }
 

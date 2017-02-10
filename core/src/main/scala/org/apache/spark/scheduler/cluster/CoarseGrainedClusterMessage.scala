@@ -59,6 +59,13 @@ private[spark] object CoarseGrainedClusterMessages {
       logUrls: Map[String, String])
     extends CoarseGrainedClusterMessage
 
+  case class LambdaDetails(
+      executorId: String,
+      awsRequestId: String,
+      logGroupName: String,
+      logStreamName: String)
+    extends CoarseGrainedClusterMessage
+
   case class StatusUpdate(executorId: String, taskId: Long, state: TaskState,
     data: SerializableBuffer) extends CoarseGrainedClusterMessage
 

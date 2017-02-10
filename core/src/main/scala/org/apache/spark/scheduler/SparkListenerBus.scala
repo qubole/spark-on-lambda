@@ -59,6 +59,8 @@ private[spark] trait SparkListenerBus
         listener.onExecutorMetricsUpdate(metricsUpdate)
       case executorAdded: SparkListenerExecutorAdded =>
         listener.onExecutorAdded(executorAdded)
+      case executorLambdaDetails: SparkListenerExecutorLambdaDetails =>
+        listener.onExecutorLambdaDetails(executorLambdaDetails)
       case executorRemoved: SparkListenerExecutorRemoved =>
         listener.onExecutorRemoved(executorRemoved)
       case blockUpdated: SparkListenerBlockUpdated =>

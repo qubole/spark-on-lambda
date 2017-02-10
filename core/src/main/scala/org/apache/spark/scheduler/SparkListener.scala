@@ -106,6 +106,15 @@ case class SparkListenerExecutorRemoved(time: Long, executorId: String, reason: 
   extends SparkListenerEvent
 
 @DeveloperApi
+case class SparkListenerExecutorLambdaDetails(
+    time: Long,
+    executorId: String,
+    awsRequestId: String,
+    logGroupName: String,
+    logStreamName: String)
+  extends SparkListenerEvent
+
+@DeveloperApi
 case class SparkListenerBlockUpdated(blockUpdatedInfo: BlockUpdatedInfo) extends SparkListenerEvent
 
 /**
@@ -212,9 +221,14 @@ private[spark] trait SparkListenerInterface {
    * Called when an RDD is manually unpersisted by the application
    */
   def onUnpersistRDD(unpersistRDD: SparkListenerUnpersistRDD): Unit
+  
+  /**
+    * Called when the driver gets Lambda related details from a new executor.
+    */
+  def onExecutorLambdaDetails(executorLambdaDetails: SparkListenerExecutorLambdaDetails): Unit
 
   /**
-   * Called when the application starts
+   * Called when the driver removes an executor.
    */
   def onApplicationStart(applicationStart: SparkListenerApplicationStart): Unit
 
@@ -290,6 +304,9 @@ abstract class SparkListener extends SparkListenerInterface {
       executorMetricsUpdate: SparkListenerExecutorMetricsUpdate): Unit = { }
 
   override def onExecutorAdded(executorAdded: SparkListenerExecutorAdded): Unit = { }
+
+  override def onExecutorLambdaDetails(
+      executorLambdaDetails: SparkListenerExecutorLambdaDetails): Unit = { }
 
   override def onExecutorRemoved(executorRemoved: SparkListenerExecutorRemoved): Unit = { }
 

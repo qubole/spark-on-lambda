@@ -37,6 +37,7 @@ private[spark] trait ListenerBus[L <: AnyRef, E] extends Logging {
    * Add a listener to listen events. This method is thread-safe and can be called in any thread.
    */
   final def addListener(listener: L): Unit = {
+    logInfo(s"LAMBDA: 5101: addListener: $listener")
     listeners.add(listener)
   }
 
@@ -45,6 +46,7 @@ private[spark] trait ListenerBus[L <: AnyRef, E] extends Logging {
    * in any thread.
    */
   final def removeListener(listener: L): Unit = {
+    logInfo(s"LAMBDA: 5102: removeListener: $listener")
     listeners.remove(listener)
   }
 
@@ -58,6 +60,7 @@ private[spark] trait ListenerBus[L <: AnyRef, E] extends Logging {
     // Java Iterator directly.
     val iter = listeners.iterator
     while (iter.hasNext) {
+      logDebug("LAMBDA: 5100: postToAll")
       val listener = iter.next()
       try {
         doPostEvent(listener, event)

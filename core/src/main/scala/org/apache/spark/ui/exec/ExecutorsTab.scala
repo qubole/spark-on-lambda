@@ -56,6 +56,12 @@ private[ui] case class ExecutorTaskSummary(
     var isAlive: Boolean = true
 )
 
+case class ExecutorLambdaDetails(
+  awsRequestId: String,
+  logGroupName: String,
+  logStreamName: String
+)
+
 /**
  * :: DeveloperApi ::
  * A SparkListener that prepares information to be displayed on the ExecutorsTab

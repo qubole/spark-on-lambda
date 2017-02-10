@@ -48,6 +48,10 @@ private[spark] class NettyBlockTransferService(
     numCores: Int)
   extends BlockTransferService {
 
+  logInfo("LAMBDA: 1001: NettyBlockTransferService")
+  logInfo(s"LAMBDA: 1002: $bindAddress")
+  logInfo(s"LAMBDA: 1003: $hostName")
+  logInfo(s"LAMBDA: 1004: ${_port}")
   // TODO: Don't use Java serialization, use a more cross-version compatible serialization format.
   private val serializer = new JavaSerializer(conf)
   private val authEnabled = securityManager.isAuthenticationEnabled()

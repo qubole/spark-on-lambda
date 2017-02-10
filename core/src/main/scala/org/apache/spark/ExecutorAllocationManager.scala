@@ -231,7 +231,9 @@ private[spark] class ExecutorAllocationManager(
         }
       }
     }
+    logInfo("LAMBDA: 8001: ExecutorAllocationManager")
     executor.scheduleWithFixedDelay(scheduleTask, 0, intervalMillis, TimeUnit.MILLISECONDS)
+    logInfo("LAMBDA: 8002: ExecutorAllocationManager")
 
     client.requestTotalExecutors(numExecutorsTarget, localityAwareTasks, hostToLocalTaskCount)
   }
@@ -698,12 +700,15 @@ private[spark] class ExecutorAllocationManager(
     }
 
     override def onExecutorAdded(executorAdded: SparkListenerExecutorAdded): Unit = {
+      logInfo("LAMBDA: 4001: onExecutorAdded")
       val executorId = executorAdded.executorId
       if (executorId != SparkContext.DRIVER_IDENTIFIER) {
+        logInfo("LAMBDA: 4002: onExecutorAdded")
         // This guards against the race condition in which the `SparkListenerTaskStart`
         // event is posted before the `SparkListenerBlockManagerAdded` event, which is
         // possible because these events are posted in different threads. (see SPARK-4951)
         if (!allocationManager.executorIds.contains(executorId)) {
+          logInfo("LAMBDA: 4003: onExecutorAdded")
           allocationManager.onExecutorAdded(executorId)
         }
       }

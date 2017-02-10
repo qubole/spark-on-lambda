@@ -17,7 +17,7 @@
 
 package org.apache.spark.storage
 
-import java.io.{File, IOException}
+import java.io.{File, IOException, PrintWriter, StringWriter}
 import java.util.UUID
 
 import org.apache.spark.SparkConf
@@ -33,7 +33,6 @@ import org.apache.spark.util.{ShutdownHookManager, Utils}
  * SPARK_LOCAL_DIRS, if it's set).
  */
 private[spark] class DiskBlockManager(conf: SparkConf, deleteFilesOnStop: Boolean) extends Logging {
-
   private[spark] val subDirsPerLocalDir = conf.getInt("spark.diskStore.subDirectories", 64)
 
   /* Create one local directory for each path mentioned in spark.local.dir; then, inside this

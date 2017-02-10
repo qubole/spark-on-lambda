@@ -173,8 +173,17 @@ private[spark] class BlockManager(
       ret
     }
 
-    val id =
-      BlockManagerId(executorId, blockTransferService.hostName, blockTransferService.port, None)
+    logInfo(s"LAMBDA: 11000: BlockManager: ${blockTransferService.hostName}")
+    logInfo(s"LAMBDA: 11001: BlockManager: ${blockTransferService.port}")
+    val id = if (executorId == SparkContext.DRIVER_IDENTIFIER ||
+      executorId == SparkContext.LEGACY_DRIVER_IDENTIFIER) {
+      logInfo(s"LAMBDA: 11002: BlockManager: Creating driver BlockManagerId")
+      BlockManagerId(executorId, blockTransferService.hostName,
+        blockTransferService.port, None)
+    } else {
+      logInfo(s"LAMBDA: 11002: BlockManager: Creating executor BlockManagerId")
+      BlockManagerId(executorId, executorId, executorId.toInt, None)
+    }
 
     val idFromMaster = master.registerBlockManager(
       id,
@@ -549,6 +558,73 @@ private[spark] class BlockManager(
         serializerManager.dataDeserializeStream(blockId, data.toInputStream(dispose = true))(ct)
       new BlockResult(values, DataReadMethod.Network, data.size)
     }
+  }
+
+  private def getLocationsForLambda(blockId: BlockId): Seq[BlockManagerId] = {
+    val locs = Random.shuffle(master.getLocations(blockId))
+    val (preferredLocs, otherLocs) = locs.partition { loc => blockManagerId.host == loc.host }
+    val (driverLoc, restLocs) = otherLocs.partition { loc =>
+      (loc.executorId == SparkContext.DRIVER_IDENTIFIER ||
+      loc.executorId == SparkContext.LEGACY_DRIVER_IDENTIFIER)
+    }
+    val seq = preferredLocs ++ driverLoc
+    seq.foreach(x => logInfo(s"LAMBDA: 15000: getLocationsForLambda: $x"))
+    seq
+  }
+
+  def getRemoteBytesForLambda(blockId: BlockId): Option[ChunkedByteBuffer] = {
+    logDebug(s"Getting remote block $blockId")
+    require(blockId != null, "BlockId is null")
+    var runningFailureCount = 0
+    var totalFailureCount = 0
+    val locations = getLocationsForLambda(blockId)
+    val maxFetchFailures = locations.size
+    var locationIterator = locations.iterator
+    while (locationIterator.hasNext) {
+      val loc = locationIterator.next()
+      logDebug(s"Getting remote block $blockId from $loc")
+      val data = try {
+        blockTransferService.fetchBlockSync(
+          loc.host, loc.port, loc.executorId, blockId.toString).nioByteBuffer()
+      } catch {
+        case NonFatal(e) =>
+          runningFailureCount += 1
+          totalFailureCount += 1
+
+          if (totalFailureCount >= maxFetchFailures) {
+            // Give up trying anymore locations. Either we've tried all of the original locations,
+            // or we've refreshed the list of locations from the master, and have still
+            // hit failures after trying locations from the refreshed list.
+            logWarning(s"Failed to fetch block after $totalFailureCount fetch failures. " +
+              s"Most recent failure cause:", e)
+            return None
+          }
+
+          logWarning(s"Failed to fetch remote block $blockId " +
+            s"from $loc (failed attempt $runningFailureCount)", e)
+
+          // If there is a large number of executors then locations list can contain a
+          // large number of stale entries causing a large number of retries that may
+          // take a significant amount of time. To get rid of these stale entries
+          // we refresh the block locations after a certain number of fetch failures
+          if (runningFailureCount >= maxFailuresBeforeLocationRefresh) {
+            locationIterator = getLocationsForLambda(blockId).iterator
+            logDebug(s"Refreshed locations from the driver " +
+              s"after ${runningFailureCount} fetch failures.")
+            runningFailureCount = 0
+          }
+
+          // This location failed, so we retry fetch from a different one by returning null here
+          null
+      }
+
+      if (data != null) {
+        return Some(new ChunkedByteBuffer(data))
+      }
+      logDebug(s"The value of block $blockId is null")
+    }
+    logDebug(s"Block $blockId not found")
+    None
   }
 
   /**

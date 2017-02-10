@@ -67,6 +67,23 @@ private[spark] class CoarseGrainedExecutorBackend(
       case Failure(e) =>
         exitExecutor(1, s"Cannot register with driver: $driverUrl", e, notifyDriver = false)
     }(ThreadUtils.sameThread)
+
+    val requestId = env.conf.get("spark.qubole.lambda.awsRequestId")
+    val logGroupName = env.conf.get("spark.qubole.lambda.logGroupName")
+    val logStreamName = env.conf.get("spark.qubole.lambda.logStreamName")
+    rpcEnv.asyncSetupEndpointRefByURI(driverUrl).flatMap { ref =>
+      // This is a very fast action so we can use "ThreadUtils.sameThread"
+      driver = Some(ref)
+      val request = LambdaDetails(executorId, requestId, logGroupName, logStreamName)
+      ref.ask[Boolean](request)
+    }(ThreadUtils.sameThread).onComplete {
+      // This is a very fast action so we can use "ThreadUtils.sameThread"
+      case Success(msg) =>
+      // Always receive `true`. Just ignore it
+      case Failure(e) =>
+        exitExecutor(1, s"Cannot send Lambda details to driver: $driverUrl", e,
+          notifyDriver = false)
+    }(ThreadUtils.sameThread)
   }
 
   def extractLogUrls: Map[String, String] = {
@@ -177,21 +194,38 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
   private def run(
       driverUrl: String,
       executorId: String,
-      hostname: String,
+      hostnameInput: String,
       cores: Int,
       appId: String,
       workerUrl: Option[String],
       userClassPath: Seq[URL]) {
 
+    logInfo("LAMBDA: 1")
     Utils.initDaemon(log)
+    logInfo("LAMBDA: 2")
+    val hostname: String = if (hostnameInput == "LAMBDA") {
+      Utils.localHostName
+    } else {
+      hostnameInput
+    }
+    logInfo(s"LAMBDA: 2.1: $hostname")
+    logInfo(s"LAMBDA: 2.2: $hostname")
+    SparkHadoopUtil.get.runAsSparkUser { () =>
+      logInfo(s"LAMBDA: 2.3")
+    }
+    logInfo(s"LAMBDA: 2.4")
 
     SparkHadoopUtil.get.runAsSparkUser { () =>
       // Debug code
+      logInfo("LAMBDA: 3")
       Utils.checkHost(hostname)
+      logInfo("LAMBDA: 4")
 
       // Bootstrap to fetch the driver's Spark properties.
       val executorConf = new SparkConf
+      logInfo("LAMBDA: 4.1")
       val port = executorConf.getInt("spark.executor.port", 0)
+      logInfo("LAMBDA: 4.2")
       val fetcher = RpcEnv.create(
         "driverPropsFetcher",
         hostname,
@@ -199,10 +233,15 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
         executorConf,
         new SecurityManager(executorConf),
         clientMode = true)
+      logInfo("LAMBDA: 4.3")
       val driver = fetcher.setupEndpointRefByURI(driverUrl)
+      logInfo("LAMBDA: 4.4")
       val cfg = driver.askWithRetry[SparkAppConfig](RetrieveSparkAppConfig)
+      logInfo("LAMBDA: 4.5")
       val props = cfg.sparkProperties ++ Seq[(String, String)](("spark.app.id", appId))
+      logInfo("LAMBDA: 4.6")
       fetcher.shutdown()
+      logInfo("LAMBDA: 5")
 
       // Create SparkEnv using properties we fetched from the driver.
       val driverConf = new SparkConf()
@@ -222,14 +261,18 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
 
       val env = SparkEnv.createExecutorEnv(
         driverConf, executorId, hostname, port, cores, cfg.ioEncryptionKey, isLocal = false)
+      logInfo("LAMBDA: 6")
 
       env.rpcEnv.setupEndpoint("Executor", new CoarseGrainedExecutorBackend(
         env.rpcEnv, driverUrl, executorId, hostname, cores, userClassPath, env))
       workerUrl.foreach { url =>
         env.rpcEnv.setupEndpoint("WorkerWatcher", new WorkerWatcher(env.rpcEnv, url))
       }
+      logInfo("LAMBDA: 7")
       env.rpcEnv.awaitTermination()
+      logInfo("LAMBDA: 8")
       SparkHadoopUtil.get.stopCredentialUpdater()
+      logInfo("LAMBDA: 9")
     }
   }
 

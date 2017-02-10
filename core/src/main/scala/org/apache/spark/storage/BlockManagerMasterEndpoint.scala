@@ -22,11 +22,10 @@ import java.util.{HashMap => JHashMap}
 import scala.collection.mutable
 import scala.collection.JavaConverters._
 import scala.concurrent.{ExecutionContext, Future}
-
 import org.apache.spark.SparkConf
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.internal.Logging
-import org.apache.spark.rpc.{RpcCallContext, RpcEndpointRef, RpcEnv, ThreadSafeRpcEndpoint}
+import org.apache.spark.rpc._
 import org.apache.spark.scheduler._
 import org.apache.spark.storage.BlockManagerMessages._
 import org.apache.spark.util.{ThreadUtils, Utils}
@@ -69,7 +68,8 @@ class BlockManagerMasterEndpoint(
 
   override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
     case RegisterBlockManager(blockManagerId, maxMemSize, slaveEndpoint) =>
-      context.reply(register(blockManagerId, maxMemSize, slaveEndpoint))
+      logInfo(s"LAMBDA: 17000: RegisterBlockManager recvd on driver from ${context.senderAddress}")
+      context.reply(register(blockManagerId, maxMemSize, slaveEndpoint, context.senderAddress))
 
     case _updateBlockInfo @
         UpdateBlockInfo(blockManagerId, blockId, storageLevel, deserializedSize, size) =>
@@ -315,14 +315,30 @@ class BlockManagerMasterEndpoint(
   private def register(
       idWithoutTopologyInfo: BlockManagerId,
       maxMemSize: Long,
-      slaveEndpoint: RpcEndpointRef): BlockManagerId = {
+      slaveEndpoint: RpcEndpointRef,
+      slaveAddress: RpcAddress): BlockManagerId = {
     // the dummy id is not expected to contain the topology information.
     // we get that info here and respond back with a more fleshed out block manager id
+    logInfo(s"LAMBDA: 12000: ${idWithoutTopologyInfo.executorId}")
+    logInfo(s"LAMBDA: 12001: ${idWithoutTopologyInfo.host}")
+    logInfo(s"LAMBDA: 12002: ${idWithoutTopologyInfo.port}")
+    logInfo(s"LAMBDA: 12003: ${slaveEndpoint}")
+    logInfo(s"LAMBDA: 12004: ${slaveAddress.host}")
+    logInfo(s"LAMBDA: 12005: ${slaveAddress.port}")
+
     val id = BlockManagerId(
       idWithoutTopologyInfo.executorId,
       idWithoutTopologyInfo.host,
       idWithoutTopologyInfo.port,
       topologyMapper.getTopologyForHost(idWithoutTopologyInfo.host))
+
+    /*
+    val id = BlockManagerId(
+      idWithoutTopologyInfo.executorId,
+      slaveAddress.host,
+      slaveAddress.port,
+      topologyMapper.getTopologyForHost(idWithoutTopologyInfo.host))
+    */
 
     val time = System.currentTimeMillis()
     if (!blockManagerInfo.contains(id)) {

@@ -115,6 +115,7 @@ private[netty] class NettyRpcEnv(
       } else {
         java.util.Collections.emptyList()
       }
+    logInfo(s"LAMBDA: 14000: NettyRpcEnv.startServer: $bindAddress $port")
     server = transportContext.createServer(bindAddress, port, bootstraps)
     dispatcher.registerRpcEndpoint(
       RpcEndpointVerifier.NAME, new RpcEndpointVerifier(this, dispatcher))
@@ -122,6 +123,7 @@ private[netty] class NettyRpcEnv(
 
   @Nullable
   override lazy val address: RpcAddress = {
+    logInfo(s"LAMBDA: 14001: NettyRpcEnv.address: $host")
     if (server != null) RpcAddress(host, server.getPort()) else null
   }
 
@@ -194,6 +196,7 @@ private[netty] class NettyRpcEnv(
   }
 
   private[netty] def createClient(address: RpcAddress): TransportClient = {
+    logInfo(s"LAMBDA: 14002: NettyRpcEnv.createClient: ${address.host} ${address.port}")
     clientFactory.createClient(address.host, address.port)
   }
 

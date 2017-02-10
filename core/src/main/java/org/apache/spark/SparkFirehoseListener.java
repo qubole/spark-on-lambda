@@ -109,6 +109,11 @@ public class SparkFirehoseListener implements SparkListenerInterface {
     }
 
     @Override
+    public final void onExecutorLambdaDetails(SparkListenerExecutorLambdaDetails executorLambdaDetails) {
+        onEvent(executorLambdaDetails);
+    }
+
+    @Override
     public final void onExecutorRemoved(SparkListenerExecutorRemoved executorRemoved) {
         onEvent(executorRemoved);
     }

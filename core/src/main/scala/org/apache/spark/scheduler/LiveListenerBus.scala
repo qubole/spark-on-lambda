@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 import scala.util.DynamicVariable
 
 import org.apache.spark.{SparkContext, SparkException}
+import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
 import org.apache.spark.util.Utils
 
@@ -33,7 +34,8 @@ import org.apache.spark.util.Utils
  * has started will events be actually propagated to all attached listeners. This listener bus
  * is stopped when `stop()` is called, and it will drop further events after stopping.
  */
-private[spark] class LiveListenerBus(val sparkContext: SparkContext) extends SparkListenerBus {
+private[spark] class LiveListenerBus(val sparkContext: SparkContext) extends SparkListenerBus
+    with Logging {
 
   self =>
 
@@ -73,6 +75,7 @@ private[spark] class LiveListenerBus(val sparkContext: SparkContext) extends Spa
   private val eventLock = new Semaphore(0)
 
   private val listenerThread = new Thread(name) {
+    logInfo("LAMBDA: 5001: listenerThread")
     setDaemon(true)
     override def run(): Unit = Utils.tryOrStopSparkContext(sparkContext) {
       LiveListenerBus.withinListenerThread.withValue(true) {
@@ -91,6 +94,7 @@ private[spark] class LiveListenerBus(val sparkContext: SparkContext) extends Spa
               }
               return
             }
+            logDebug(s"LAMBDA: 5001.A: listenerThread: $event")
             postToAll(event)
           } finally {
             self.synchronized {
@@ -111,7 +115,9 @@ private[spark] class LiveListenerBus(val sparkContext: SparkContext) extends Spa
    *
    */
   def start(): Unit = {
+    logInfo("LAMBDA: 5002: LiveListenerBus")
     if (started.compareAndSet(false, true)) {
+      logInfo("LAMBDA: 5003: LiveListenerBus")
       listenerThread.start()
     } else {
       throw new IllegalStateException(s"$name already started!")
@@ -119,28 +125,37 @@ private[spark] class LiveListenerBus(val sparkContext: SparkContext) extends Spa
   }
 
   def post(event: SparkListenerEvent): Unit = {
+    logDebug(s"LAMBDA: 5004: LiveListenerBus: $event")
     if (stopped.get) {
+      logDebug("LAMBDA: 5005: LiveListenerBus")
       // Drop further events to make `listenerThread` exit ASAP
       logError(s"$name has already stopped! Dropping event $event")
       return
     }
+    logDebug("LAMBDA: 5006: LiveListenerBus")
     val eventAdded = eventQueue.offer(event)
     if (eventAdded) {
+      logDebug("LAMBDA: 5007: LiveListenerBus")
       eventLock.release()
     } else {
+      logDebug("LAMBDA: 5008: LiveListenerBus")
       onDropEvent(event)
       droppedEventsCounter.incrementAndGet()
     }
 
+    logDebug("LAMBDA: 5009: LiveListenerBus")
     val droppedEvents = droppedEventsCounter.get
     if (droppedEvents > 0) {
+      logDebug("LAMBDA: 5010: LiveListenerBus")
       // Don't log too frequently
       if (System.currentTimeMillis() - lastReportTimestamp >= 60 * 1000) {
+        logDebug("LAMBDA: 5011: LiveListenerBus")
         // There may be multiple threads trying to decrease droppedEventsCounter.
         // Use "compareAndSet" to make sure only one thread can win.
         // And if another thread is increasing droppedEventsCounter, "compareAndSet" will fail and
         // then that thread will update it.
         if (droppedEventsCounter.compareAndSet(droppedEvents, 0)) {
+          logDebug("LAMBDA: 5012: LiveListenerBus")
           val prevLastReportTimestamp = lastReportTimestamp
           lastReportTimestamp = System.currentTimeMillis()
           logWarning(s"Dropped $droppedEvents SparkListenerEvents since " +
@@ -189,6 +204,7 @@ private[spark] class LiveListenerBus(val sparkContext: SparkContext) extends Spa
    * new events after stopping.
    */
   def stop(): Unit = {
+    logInfo("LAMBDA: 5013: LiveListenerBus")
     if (!started.get()) {
       throw new IllegalStateException(s"Attempted to stop $name that has not yet started!")
     }
@@ -209,6 +225,7 @@ private[spark] class LiveListenerBus(val sparkContext: SparkContext) extends Spa
    * Note: `onDropEvent` can be called in any thread.
    */
   def onDropEvent(event: SparkListenerEvent): Unit = {
+    logInfo("LAMBDA: 5014: LiveListenerBus")
     if (logDroppedEvent.compareAndSet(false, true)) {
       // Only log the following message once to avoid duplicated annoying logs.
       logError("Dropping SparkListenerEvent because no remaining room in event queue. " +

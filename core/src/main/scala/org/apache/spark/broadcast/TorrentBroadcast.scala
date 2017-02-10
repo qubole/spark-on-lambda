@@ -158,7 +158,7 @@ private[spark] class TorrentBroadcast[T: ClassTag](obj: T, id: Long)
           blocks(pid) = block
           releaseLock(pieceId)
         case None =>
-          bm.getRemoteBytes(pieceId) match {
+          bm.getRemoteBytesForLambda(pieceId) match {
             case Some(b) =>
               if (checksumEnabled) {
                 val sum = calcChecksum(b.chunks(0))
