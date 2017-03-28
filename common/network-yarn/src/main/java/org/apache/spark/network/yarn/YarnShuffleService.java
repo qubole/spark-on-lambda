@@ -182,6 +182,7 @@ public class YarnShuffleService extends AuxiliaryService {
       // the port should normally be fixed, but for tests its useful to find an open port
       port = shuffleServer.getPort();
       boundPort = port;
+
       String authEnabledString = authEnabled ? "enabled" : "not enabled";
       logger.info("Started YARN shuffle service for Spark on port {}. " +
         "Authentication is {}.  Registered executor file is {}", port, authEnabledString,

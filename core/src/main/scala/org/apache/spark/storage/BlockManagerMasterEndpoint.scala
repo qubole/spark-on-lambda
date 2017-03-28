@@ -68,7 +68,7 @@ class BlockManagerMasterEndpoint(
 
   override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
     case RegisterBlockManager(blockManagerId, maxMemSize, slaveEndpoint) =>
-      logInfo(s"LAMBDA: 17000: RegisterBlockManager recvd on driver from ${context.senderAddress}")
+      logDebug(s"LAMBDA: 17000: RegisterBlockManager recvd on driver from ${context.senderAddress}")
       context.reply(register(blockManagerId, maxMemSize, slaveEndpoint, context.senderAddress))
 
     case _updateBlockInfo @
@@ -319,12 +319,12 @@ class BlockManagerMasterEndpoint(
       slaveAddress: RpcAddress): BlockManagerId = {
     // the dummy id is not expected to contain the topology information.
     // we get that info here and respond back with a more fleshed out block manager id
-    logInfo(s"LAMBDA: 12000: ${idWithoutTopologyInfo.executorId}")
-    logInfo(s"LAMBDA: 12001: ${idWithoutTopologyInfo.host}")
-    logInfo(s"LAMBDA: 12002: ${idWithoutTopologyInfo.port}")
-    logInfo(s"LAMBDA: 12003: ${slaveEndpoint}")
-    logInfo(s"LAMBDA: 12004: ${slaveAddress.host}")
-    logInfo(s"LAMBDA: 12005: ${slaveAddress.port}")
+    logDebug(s"LAMBDA: 12000: ${idWithoutTopologyInfo.executorId}")
+    logDebug(s"LAMBDA: 12001: ${idWithoutTopologyInfo.host}")
+    logDebug(s"LAMBDA: 12002: ${idWithoutTopologyInfo.port}")
+    logDebug(s"LAMBDA: 12003: ${slaveEndpoint}")
+    logDebug(s"LAMBDA: 12004: ${slaveAddress.host}")
+    logDebug(s"LAMBDA: 12005: ${slaveAddress.port}")
 
     val id = BlockManagerId(
       idWithoutTopologyInfo.executorId,

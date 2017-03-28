@@ -270,6 +270,20 @@ private[spark] class TaskSetManager(
     }
   }
 
+  private def hasExecutorRanTask(execId: String): Boolean = {
+    val execTaskSummary = sched.sc.ui.map(_.executorsListener.executorToTaskSummary).get(execId)
+    if (execTaskSummary.tasksFailed > 0
+      || execTaskSummary.tasksActive > 0
+      || execTaskSummary.tasksComplete > 0) {
+      logInfo(s"Ran a task already on this executor ${execId}," +
+        s" so not scheduling task here also killing the executor")
+      sched.sc.killExecutor(execId)
+      true
+    } else {
+      false
+    }
+  }
+
   /**
    * Return a speculative task for a given executor if any are available. The task should not have
    * an attempt running on this host, in case the host is slow. In addition, the task should meet
@@ -416,7 +430,11 @@ private[spark] class TaskSetManager(
       blacklist.isNodeBlacklistedForTaskSet(host) ||
         blacklist.isExecutorBlacklistedForTaskSet(execId)
     }
-    if (!isZombie && !offerBlacklisted) {
+
+    val executeOneTask = conf.getBoolean("spark.scheduler.executor.executeOneTask", false)
+    val ranTaskAlready = executeOneTask && hasExecutorRanTask(execId)
+
+    if (!isZombie && !offerBlacklisted && !ranTaskAlready) {
       val curTime = clock.getTimeMillis()
 
       var allowedLocality = maxLocality
@@ -850,7 +868,8 @@ private[spark] class TaskSetManager(
     // and we are not using an external shuffle server which could serve the shuffle outputs.
     // The reason is the next stage wouldn't be able to fetch the data from this dead executor
     // so we would need to rerun these tasks on other executors.
-    if (tasks(0).isInstanceOf[ShuffleMapTask] && !env.blockManager.externalShuffleServiceEnabled) {
+    if (tasks(0).isInstanceOf[ShuffleMapTask] &&
+      !(env.blockManager.externalShuffleServiceEnabled || env.blockManager.shuffleOverS3Enabled)) {
       for ((tid, info) <- taskInfos if info.executorId == execId) {
         val index = taskInfos(tid).index
         if (successful(index)) {

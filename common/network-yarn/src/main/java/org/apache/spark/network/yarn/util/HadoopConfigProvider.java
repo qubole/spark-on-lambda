@@ -39,4 +39,9 @@ public class HadoopConfigProvider extends ConfigProvider {
     }
     return value;
   }
+
+  @Override
+  public Configuration getHadoopConf() {
+    return conf;
+  }
 }

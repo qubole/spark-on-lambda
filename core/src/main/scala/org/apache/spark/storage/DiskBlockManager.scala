@@ -17,8 +17,10 @@
 
 package org.apache.spark.storage
 
-import java.io.{File, IOException, PrintWriter, StringWriter}
+import java.io.{File, IOException}
 import java.util.UUID
+
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.executor.ExecutorExitCode
@@ -32,8 +34,19 @@ import org.apache.spark.util.{ShutdownHookManager, Utils}
  * Block files are hashed among the directories listed in spark.local.dir (or in
  * SPARK_LOCAL_DIRS, if it's set).
  */
-private[spark] class DiskBlockManager(conf: SparkConf, deleteFilesOnStop: Boolean) extends Logging {
+private[spark] class DiskBlockManager(executorId: String, conf: SparkConf, deleteFilesOnStop: Boolean) extends Logging {
+  
   private[spark] val subDirsPerLocalDir = conf.getInt("spark.diskStore.subDirectories", 64)
+
+  // TODO: BHARATH: I think we should think of eliminating this as a flag (if possible)
+  // and instead create derived class which encapsulate the behaviour with that being true.
+  private val shuffleOverS3 = conf.getBoolean("spark.shuffle.s3.enabled", false)
+
+  private val s3PrefixLocation = conf.get("spark.qubole.s3PrefixLocation", "s3://dev.canopydata.com/vsowrira/")
+
+  private lazy val hadoopConf = BlockManager.getHadoopConf(conf)
+
+  private lazy val hadoopFileSystem = BlockManager.getHadoopFileSystem(conf)
 
   /* Create one local directory for each path mentioned in spark.local.dir; then, inside this
    * directory, create multiple subdirectories that we will hash files into, in order to avoid
@@ -68,12 +81,24 @@ private[spark] class DiskBlockManager(conf: SparkConf, deleteFilesOnStop: Boolea
         if (!newDir.exists() && !newDir.mkdir()) {
           throw new IOException(s"Failed to create local dir in $newDir.")
         }
+
+        val path = Utils.localFileToS3(s3PrefixLocation, newDir)
+        logInfo(s"Creating a dir ${path}")
+        logInfo(s"Creating a dir ${path.getName}")
+        if(shuffleOverS3 && !hadoopMkdir(path)) {
+          throw new IOException(s"Failed to create dir in $path.")
+        }
+
         subDirs(dirId)(subDirId) = newDir
         newDir
       }
     }
 
     new File(subDir, filename)
+  }
+
+  def hadoopMkdir(dir: Path): Boolean = {
+    hadoopFileSystem.mkdirs(dir)
   }
 
   def getFile(blockId: BlockId): File = getFile(blockId.name)
@@ -128,9 +153,9 @@ private[spark] class DiskBlockManager(conf: SparkConf, deleteFilesOnStop: Boolea
   private def createLocalDirs(conf: SparkConf): Array[File] = {
     Utils.getConfiguredLocalDirs(conf).flatMap { rootDir =>
       try {
-        val localDir = Utils.createDirectory(rootDir, "blockmgr")
-        logInfo(s"Created local directory at $localDir")
-        Some(localDir)
+          val localDir = Utils.createDirectory(rootDir, s"executor-${executorId}")
+          logInfo(s"Created local directory at $localDir")
+          Some(localDir)
       } catch {
         case e: IOException =>
           logError(s"Failed to create local dir in $rootDir. Ignoring this directory.", e)

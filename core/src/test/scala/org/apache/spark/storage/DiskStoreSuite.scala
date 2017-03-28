@@ -37,7 +37,7 @@ class DiskStoreSuite extends SparkFunSuite {
     val byteBuffer = new ChunkedByteBuffer(ByteBuffer.wrap(bytes))
 
     val blockId = BlockId("rdd_1_2")
-    val diskBlockManager = new DiskBlockManager(new SparkConf(), deleteFilesOnStop = true)
+    val diskBlockManager = new DiskBlockManager("dummy", new SparkConf(), deleteFilesOnStop = true)
 
     val diskStoreMapped = new DiskStore(new SparkConf().set(confKey, "0"), diskBlockManager)
     diskStoreMapped.putBytes(blockId, byteBuffer)

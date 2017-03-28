@@ -20,6 +20,8 @@ package org.apache.spark.storage
 import java.io._
 import java.nio.ByteBuffer
 
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
 import scala.collection.mutable
 import scala.collection.mutable.HashMap
 import scala.concurrent.{Await, ExecutionContext, Future}
@@ -29,6 +31,7 @@ import scala.util.Random
 import scala.util.control.NonFatal
 
 import org.apache.spark._
+import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.executor.{DataReadMethod, ShuffleWriteMetrics}
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.{MemoryManager, MemoryMode}
@@ -39,12 +42,11 @@ import org.apache.spark.network.shuffle.ExternalShuffleClient
 import org.apache.spark.network.shuffle.protocol.ExecutorShuffleInfo
 import org.apache.spark.rpc.RpcEnv
 import org.apache.spark.serializer.{SerializerInstance, SerializerManager}
-import org.apache.spark.shuffle.ShuffleManager
+import org.apache.spark.shuffle.{S3ShuffleBlockResolver, ShuffleManager}
 import org.apache.spark.storage.memory._
 import org.apache.spark.unsafe.Platform
 import org.apache.spark.util._
 import org.apache.spark.util.io.ChunkedByteBuffer
-
 
 /* Class for returning a fetched block and associated metrics. */
 private[spark] class BlockResult(
@@ -75,11 +77,14 @@ private[spark] class BlockManager(
   private[spark] val externalShuffleServiceEnabled =
     conf.getBoolean("spark.shuffle.service.enabled", false)
 
+  private[spark] val shuffleOverS3Enabled =
+    conf.getBoolean("spark.shuffle.s3.enabled", false)
+
   val diskBlockManager = {
     // Only perform cleanup if an external service is not serving our shuffle files.
     val deleteFilesOnStop =
       !externalShuffleServiceEnabled || executorId == SparkContext.DRIVER_IDENTIFIER
-    new DiskBlockManager(conf, deleteFilesOnStop)
+    new DiskBlockManager(executorId, conf, deleteFilesOnStop)
   }
 
   // Visible for testing
@@ -123,10 +128,12 @@ private[spark] class BlockManager(
 
   // Client to read other executors' shuffle files. This is either an external service, or just the
   // standard BlockTransferService to directly connect to other Executors.
+  val transConf = SparkTransportConf.fromSparkConf(conf, "shuffle", numUsableCores)
   private[spark] val shuffleClient = if (externalShuffleServiceEnabled) {
-    val transConf = SparkTransportConf.fromSparkConf(conf, "shuffle", numUsableCores)
     new ExternalShuffleClient(transConf, securityManager, securityManager.isAuthenticationEnabled(),
       securityManager.isSaslEncryptionEnabled())
+  } else if (shuffleOverS3Enabled) {
+    new S3ShuffleClient(transConf, this)
   } else {
     blockTransferService
   }
@@ -319,6 +326,17 @@ private[spark] class BlockManager(
           reportBlockStatus(blockId, BlockStatus.empty)
           throw new BlockNotFoundException(blockId.toString)
       }
+    }
+  }
+
+  def getRemoteBlockData(blockId: String, executorId: String): ManagedBuffer = {
+    if (blockId.contains("shuffle") &&
+      shuffleManager.shuffleBlockResolver.isInstanceOf[S3ShuffleBlockResolver]) {
+        shuffleManager.shuffleBlockResolver.asInstanceOf[S3ShuffleBlockResolver]
+          .getRemoteBlockData(blockId, executorId)
+    } else {
+      throw new UnsupportedOperationException(
+        "Get remote block data available for S3 Shuffle blocks")
     }
   }
 
@@ -824,6 +842,18 @@ private[spark] class BlockManager(
     val syncWrites = conf.getBoolean("spark.shuffle.sync", false)
     new DiskBlockObjectWriter(file, serializerManager, serializerInstance, bufferSize,
       syncWrites, writeMetrics, blockId)
+  }
+
+  def getS3BlockWriter(
+      blockId: BlockId,
+      file: File,
+      serializerInstance: SerializerInstance,
+      bufferSize: Int,
+      writeMetrics: ShuffleWriteMetrics): S3BlockObjectWriter = {
+    val syncWrites = conf.getBoolean("spark.shuffle.sync", false)
+    val path = Utils.localFileToS3(BlockManager.getS3PrefixLocation(conf), file)
+    new S3BlockObjectWriter(file, path, BlockManager.getHadoopConf(conf),
+      serializerManager, serializerInstance, bufferSize, syncWrites, writeMetrics, blockId)
   }
 
   /**
@@ -1447,6 +1477,10 @@ private[spark] class BlockManager(
 private[spark] object BlockManager {
   private val ID_GENERATOR = new IdGenerator
 
+  private var hadoopConf : Option[Configuration] = _
+
+  private var hadoopFileSystem : Option[FileSystem] = _
+
   def blockIdsToHosts(
       blockIds: Array[BlockId],
       env: SparkEnv,
@@ -1465,5 +1499,29 @@ private[spark] object BlockManager {
       blockManagers(blockIds(i)) = blockLocations(i).map(_.host)
     }
     blockManagers.toMap
+  }
+
+  def getS3PrefixLocation(conf: SparkConf): String = {
+    conf.get("spark.qubole.s3PrefixLocation", "s3://dev.canopydata.com/vsowrira/")
+  }
+
+  def getHadoopConf(conf: SparkConf) : Configuration = {
+    hadoopConf match {
+      case Some(hConf) => hConf
+      case _ => {
+        hadoopConf = Some(SparkHadoopUtil.get.newConfiguration(conf))
+        hadoopConf.get
+      }
+    }
+  }
+
+  def getHadoopFileSystem(conf: SparkConf): FileSystem = {
+    hadoopFileSystem match {
+      case Some(fs) => fs
+      case _ => {
+        hadoopFileSystem = Some(new Path(getS3PrefixLocation(conf)).getFileSystem(getHadoopConf(conf)))
+        hadoopFileSystem.get
+      }
+    }
   }
 }

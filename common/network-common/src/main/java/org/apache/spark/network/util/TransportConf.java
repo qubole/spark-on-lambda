@@ -18,6 +18,7 @@
 package org.apache.spark.network.util;
 
 import com.google.common.primitives.Ints;
+import org.apache.hadoop.conf.Configuration;
 
 /**
  * A central location that tracks all the settings we expose to users.
@@ -68,6 +69,12 @@ public class TransportConf {
   public int getInt(String name, int defaultValue) {
     return conf.getInt(name, defaultValue);
   }
+
+  public String get(String name, String defaultValue) { return conf.get(name, defaultValue); }
+
+  public boolean getBoolean(String name, boolean defaultValue) { return conf.getBoolean(name, defaultValue); }
+
+  public Configuration getHadoopConf() { return conf.getHadoopConf(); }
 
   private String getConfKey(String suffix) {
     return "spark." + module + "." + suffix;

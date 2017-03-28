@@ -17,7 +17,6 @@
 
 package org.apache.spark.scheduler.cluster
 
-import java.util.concurrent.{Executors, ThreadPoolExecutor}
 import java.util.concurrent.atomic.AtomicInteger
 
 import com.amazonaws.ClientConfiguration
@@ -27,7 +26,6 @@ import com.amazonaws.services.lambda.model.InvokeRequest
 import com.google.common.util.concurrent.RateLimiter
 import org.json4s._
 import org.json4s.jackson.Serialization
-
 import scala.collection.mutable.{HashMap, HashSet}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -167,18 +165,18 @@ private[spark] class LambdaSchedulerBackend(
     val request = new com.amazonaws.services.lambda.model.GetFunctionRequest
     request.setFunctionName(lambdaFunctionName)
     val result = lambdaClient.getFunction(request)
-    logInfo(s"LAMBDA: 16000: Function details: ${result.toString}")
+    logDebug(s"LAMBDA: 16000: Function details: ${result.toString}")
 
     val request2 = new com.amazonaws.services.lambda.model.GetFunctionConfigurationRequest
     request2.setFunctionName(lambdaFunctionName)
     val result2 = lambdaClient.getFunctionConfiguration(request2)
     lambdaContainerMemoryBytes = result2.getMemorySize * 1024 * 1024
     lambdaContainerTimeoutSecs = result2.getTimeout
-    logInfo(s"LAMBDA: 16001: Function configuration: ${result2.toString}")
+    logDebug(s"LAMBDA: 16001: Function configuration: ${result2.toString}")
 
     val request3 = new com.amazonaws.services.lambda.model.GetAccountSettingsRequest
     val result3 = lambdaClient.getAccountSettings(request3)
-    logInfo(s"LAMBDA: 16002: Account settings: ${result3.toString}")
+    logDebug(s"LAMBDA: 16002: Account settings: ${result3.toString}")
   }
 
   override def stop(): Unit = synchronized {
@@ -257,15 +255,15 @@ private[spark] class LambdaSchedulerBackend(
         val lambdaRequesterThread = new Thread() {
           override def run() {
             val executorId = currentExecutorId.toString
-            logInfo(s"LAMBDA: 9002: Invoking lambda for $executorId: $request")
+            logDebug(s"LAMBDA: 9002: Invoking lambda for $executorId: $request")
             numLambdaCallsPending.addAndGet(1)
             try {
               val response = lambdaExecutorService.runExecutor(request)
-              logInfo(s"LAMBDA: 9003: Returned from lambda $executorId: $response")
+              logDebug(s"LAMBDA: 9003: Returned from lambda $executorId: $response")
             } catch {
               case t: Throwable => logError(s"Exception in Lambda invocation: $t")
             } finally {
-              logInfo(s"LAMBDA: 9003: Returned from lambda $executorId: finally block")
+              logDebug(s"LAMBDA: 9003: Returned from lambda $executorId: finally block")
               numLambdaCallsPending.addAndGet(-1)
               pendingLambdaRequests.remove(executorId)
             }
@@ -274,10 +272,10 @@ private[spark] class LambdaSchedulerBackend(
         lambdaRequesterThread.setDaemon(true)
         lambdaRequesterThread.setName(s"Lambda Requester Thread for $currentExecutorId")
         pendingLambdaRequests(currentExecutorId.toString) = lambdaRequesterThread
-        logInfo(s"LAMBDA: 9004: starting lambda requester thread for $currentExecutorId")
+        logDebug(s"LAMBDA: 9004: starting lambda requester thread for $currentExecutorId")
         lambdaRequesterThread.start()
 
-        logInfo(s"LAMBDA: 9005: returning from launchExecutorsOnLambda for $currentExecutorId")
+        logDebug(s"LAMBDA: 9005: returning from launchExecutorsOnLambda for $currentExecutorId")
       }
       true // TODO: Return true/false properly
     }
@@ -346,10 +344,10 @@ private[spark] class LambdaSchedulerBackend(
         case class LambdaRequesterThread(executorId: String, request: LambdaRequestPayload)
           extends Thread {
           override def run() {
-            logInfo(s"LAMBDA: 9050: LambdaRequesterThread $executorId: $request")
+            logDebug(s"LAMBDA: 9050: LambdaRequesterThread $executorId: $request")
             // Important code: Rate limit to avoid AWS errors
             limiter.acquire()
-            logInfo(s"LAMBDA: 9050.1: LambdaRequesterThread started $executorId")
+            logDebug(s"LAMBDA: 9050.1: LambdaRequesterThread started $executorId")
             numLambdaCallsPending.addAndGet(1)
             // TODO: Can we reuse the same client across calls?
             val lambdaClient = AWSLambdaClientBuilder.standard()
@@ -360,20 +358,20 @@ private[spark] class LambdaSchedulerBackend(
               implicit val formats = Serialization.formats(NoTypeHints)
               val payload: String = Serialization.write(request)
               invokeRequest.setPayload(payload)
-              logInfo(s"LAMBDA: 9050.2: request: ${payload}")
+              logDebug(s"LAMBDA: 9050.2: request: ${payload}")
               val invokeResponse = lambdaClient.invoke(invokeRequest)
-              logInfo(s"LAMBDA: 9051: Returned from lambda $executorId: $invokeResponse")
+              logDebug(s"LAMBDA: 9051: Returned from lambda $executorId: $invokeResponse")
               val invokeResponsePayload: String =
                 new String(invokeResponse.getPayload.array, java.nio.charset.StandardCharsets.UTF_8)
-              logInfo(s"LAMBDA: 9051.1: Returned from lambda $executorId: $invokeResponsePayload")
+              logDebug(s"LAMBDA: 9051.1: Returned from lambda $executorId: $invokeResponsePayload")
             } catch {
               case t: Throwable => logError(s"Exception in Lambda invocation: $t")
             } finally {
-              logInfo(s"LAMBDA: 9052: Returned from lambda $executorId: finally block")
+              logDebug(s"LAMBDA: 9052: Returned from lambda $executorId: finally block")
               numLambdaCallsPending.addAndGet(-1)
               pendingLambdaRequests.remove(executorId)
               val responseMetadata = lambdaClient.getCachedResponseMetadata(invokeRequest)
-              logInfo(s"LAMBDA: 9053: Response metadata: ${responseMetadata}")
+              logDebug(s"LAMBDA: 9053: Response metadata: ${responseMetadata}")
             }
           }
         }
@@ -382,9 +380,9 @@ private[spark] class LambdaSchedulerBackend(
         pendingLambdaRequests(currentExecutorId.toString) = lambdaRequesterThread
         lambdaRequesterThread.setDaemon(true)
         lambdaRequesterThread.setName(s"Lambda Requester Thread for $currentExecutorId")
-        logInfo(s"LAMBDA: 9055: starting lambda requester thread for $currentExecutorId")
+        logDebug(s"LAMBDA: 9055: starting lambda requester thread for $currentExecutorId")
         lambdaRequesterThread.start()
-        logInfo(s"LAMBDA: 9056: returning from launchExecutorsOnLambda for $currentExecutorId")
+        logDebug(s"LAMBDA: 9056: returning from launchExecutorsOnLambda for $currentExecutorId")
       }
       true // TODO: Return true/false properly
     }
@@ -393,7 +391,7 @@ private[spark] class LambdaSchedulerBackend(
     // TODO: Check again against numExecutorsExpected ??
     // We assume that all pending lambda calls are live lambdas and are fine
     val newExecutorsNeeded = requestedTotal - numLambdaCallsPending.get()
-    logInfo(s"LAMBDA: 9001: doRequestTotalExecutors: ${newExecutorsNeeded} = " +
+    logDebug(s"LAMBDA: 9001: doRequestTotalExecutors: ${newExecutorsNeeded} = " +
       s"${requestedTotal} - ${numLambdaCallsPending.get}")
     if (newExecutorsNeeded <= 0) {
       return Future { true }
@@ -403,17 +401,17 @@ private[spark] class LambdaSchedulerBackend(
 
   override def doKillExecutors(executorIds: Seq[String]): Future[Boolean] = {
     // TODO: Fill this function
-    logInfo(s"LAMBDA: 10200: doKillExecutors: $executorIds")
+    logDebug(s"LAMBDA: 10200: doKillExecutors: $executorIds")
     Future {
       executorIds.foreach { x =>
         if (pendingLambdaRequests.contains(x)) {
-          logInfo(s"LAMBDA: 10201: doKillExecutors: Interrupting $x")
+          logDebug(s"LAMBDA: 10201: doKillExecutors: Interrupting $x")
           val thread = pendingLambdaRequests(x)
           pendingLambdaRequests.remove(x)
           thread.interrupt()
-          logInfo(s"LAMBDA: 10202: ${thread.getState}")
+          logDebug(s"LAMBDA: 10202: ${thread.getState}")
         } else {
-          logInfo(s"LAMBDA: 10203: doKillExecutor: $x is gone")
+          logDebug(s"LAMBDA: 10203: doKillExecutor: $x is gone")
         }
       }
       true
@@ -428,17 +426,17 @@ private[spark] class LambdaSchedulerBackend(
 
     override def onExecutorAdded(event: SparkListenerExecutorAdded) {
       logInfo(s"LAMBDA: 10100: onExecutorAdded: $event")
-      logInfo(s"LAMBDA: 10100.1: onExecutorAdded: ${event.executorInfo.executorHost}")
-      logInfo(s"LAMBDA: 10100.2: ${numExecutorsRegistered.get}")
-      logInfo(s"LAMBDA: 10100.4: ${numLambdaCallsPending.get}")
+      logDebug(s"LAMBDA: 10100.1: onExecutorAdded: ${event.executorInfo.executorHost}")
+      logDebug(s"LAMBDA: 10100.2: ${numExecutorsRegistered.get}")
+      logDebug(s"LAMBDA: 10100.4: ${numLambdaCallsPending.get}")
       // TODO: synchronized block needed ??
       liveExecutors.add(event.executorId)
       numExecutorsRegistered.addAndGet(1)
     }
     override def onExecutorRemoved(event: SparkListenerExecutorRemoved): Unit = {
       logInfo(s"LAMBDA: 10101: onExecutorRemoved: $event")
-      logInfo(s"LAMBDA: 10101.2: $numExecutorsRegistered")
-      logInfo(s"LAMBDA: 10101.4: ${numLambdaCallsPending.get}")
+      logDebug(s"LAMBDA: 10101.2: $numExecutorsRegistered")
+      logDebug(s"LAMBDA: 10101.4: ${numLambdaCallsPending.get}")
       liveExecutors.remove(event.executorId)
       numExecutorsRegistered.addAndGet(-1)
     }
@@ -465,13 +463,13 @@ private[spark] class LambdaSchedulerBackend(
       * not count towards a job failure.
       */
     override def onDisconnected(rpcAddress: RpcAddress): Unit = {
-      logInfo(s"LAMBDA: 10001: onDisconnected: $rpcAddress")
+      logDebug(s"LAMBDA: 10001: onDisconnected: $rpcAddress")
       super.onDisconnected(rpcAddress)
-      logInfo("LAMBDA: 10002: onDisconnected")
+      logDebug("LAMBDA: 10002: onDisconnected")
     }
   }
   override def createDriverEndpoint(properties: Seq[(String, String)]): DriverEndpoint = {
-    logInfo("LAMBDA: 10001: createDriverEndPoint: LambdaDriverEndpoint")
+    logDebug("LAMBDA: 10001: createDriverEndPoint: LambdaDriverEndpoint")
     new LambdaDriverEndpoint(rpcEnv, properties)
   }
 

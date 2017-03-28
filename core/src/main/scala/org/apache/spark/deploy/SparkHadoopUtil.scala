@@ -46,13 +46,16 @@ import org.apache.spark.util.Utils
  */
 @DeveloperApi
 class SparkHadoopUtil extends Logging {
-  logInfo("LAMBDA: 400")
+  logDebug("LAMBDA: 400")
   private val sparkConf = new SparkConf(false).loadFromSystemProperties(true)
-  logInfo("LAMBDA: 401")
+  logDebug("LAMBDA: 401")
   val conf: Configuration = newConfiguration(sparkConf)
-  logInfo("LAMBDA: 402")
+  for (x <- conf.iterator().asScala) {
+    logDebug("LAMBDA: 401.A: " + x.getKey + "=" + x.getValue)
+  }
+  logDebug("LAMBDA: 402")
   UserGroupInformation.setConfiguration(conf)
-  logInfo("LAMBDA: 403")
+  logDebug("LAMBDA: 403")
 
   /**
    * Runs the given function with a Hadoop UserGroupInformation as a thread local variable
@@ -63,18 +66,18 @@ class SparkHadoopUtil extends Logging {
    * do a FileSystem.closeAllForUGI in order to avoid leaking Filesystems
    */
   def runAsSparkUser(func: () => Unit) {
-    logInfo("LAMBDA: 100")
+    logDebug("LAMBDA: 100")
     val user = Utils.getCurrentUserName()
     logDebug("running as user: " + user)
-    logInfo(s"LAMBDA: 101: $user")
+    logDebug(s"LAMBDA: 101: $user")
     val ugi = UserGroupInformation.createRemoteUser(user)
-    logInfo(s"LAMBDA: 102: $ugi")
+    logDebug(s"LAMBDA: 102: $ugi")
     transferCredentials(UserGroupInformation.getCurrentUser(), ugi)
-    logInfo(s"LAMBDA: 103: $ugi")
+    logDebug(s"LAMBDA: 103: $ugi")
     ugi.doAs(new PrivilegedExceptionAction[Unit] {
       def run: Unit = func()
     })
-    logInfo(s"LAMBDA: 104: $ugi")
+    logDebug(s"LAMBDA: 104: $ugi")
   }
 
   def transferCredentials(source: UserGroupInformation, dest: UserGroupInformation) {
@@ -89,20 +92,20 @@ class SparkHadoopUtil extends Logging {
    * configuration.
    */
   def appendS3AndSparkHadoopConfigurations(conf: SparkConf, hadoopConf: Configuration): Unit = {
-    logInfo("LAMBDA: 600")
+    logDebug("LAMBDA: 600")
     // Note: this null check is around more than just access to the "conf" object to maintain
     // the behavior of the old implementation of this code, for backwards compatibility.
     if (conf != null) {
-      logInfo("LAMBDA: 601")
+      logDebug("LAMBDA: 601")
       // Explicitly check for S3 environment variables
       if (System.getenv("AWS_ACCESS_KEY_ID") != null &&
           System.getenv("AWS_SECRET_ACCESS_KEY") != null &&
           System.getenv("AWS_SECRET_ACCESS_KEY").isEmpty == false &&
           System.getenv("AWS_ACCESS_KEY_ID").isEmpty == false) {
-        logInfo("LAMBDA: 602")
+        logDebug("LAMBDA: 602")
         val keyId = System.getenv("AWS_ACCESS_KEY_ID")
         val accessKey = System.getenv("AWS_SECRET_ACCESS_KEY")
-        logInfo("LAMBDA: 603")
+        logDebug("LAMBDA: 603")
 
         hadoopConf.set("fs.s3.awsAccessKeyId", keyId)
         hadoopConf.set("fs.s3n.awsAccessKeyId", keyId)
@@ -110,20 +113,20 @@ class SparkHadoopUtil extends Logging {
         hadoopConf.set("fs.s3.awsSecretAccessKey", accessKey)
         hadoopConf.set("fs.s3n.awsSecretAccessKey", accessKey)
         hadoopConf.set("fs.s3a.secret.key", accessKey)
-        logInfo("LAMBDA: 604")
+        logDebug("LAMBDA: 604")
       }
       // Copy any "spark.hadoop.foo=bar" system properties into conf as "foo=bar"
       conf.getAll.foreach { case (key, value) =>
         if (key.startsWith("spark.hadoop.")) {
-          logInfo(s"LAMBDA: 605: $key")
+          logDebug(s"LAMBDA: 605: $key")
           hadoopConf.set(key.substring("spark.hadoop.".length), value)
         }
       }
-      logInfo(s"LAMBDA: 606")
+      logDebug(s"LAMBDA: 606")
       val bufferSize = conf.get("spark.buffer.size", "65536")
-      logInfo(s"LAMBDA: 607")
+      logDebug(s"LAMBDA: 607")
       hadoopConf.set("io.file.buffer.size", bufferSize)
-      logInfo(s"LAMBDA: 608")
+      logDebug(s"LAMBDA: 608")
     }
   }
 
@@ -132,11 +135,11 @@ class SparkHadoopUtil extends Logging {
    * subsystems.
    */
   def newConfiguration(conf: SparkConf): Configuration = {
-    logInfo("LAMBDA: 500")
+    logDebug("LAMBDA: 500")
     val hadoopConf = new Configuration()
-    logInfo("LAMBDA: 501")
+    logDebug("LAMBDA: 501")
     appendS3AndSparkHadoopConfigurations(conf, hadoopConf)
-    logInfo("LAMBDA: 502")
+    logDebug("LAMBDA: 502")
     hadoopConf
   }
 
@@ -404,9 +407,9 @@ class SparkHadoopUtil extends Logging {
 
 object SparkHadoopUtil extends Logging {
 
-  logInfo("LAMBDA: 300")
+  logDebug("LAMBDA: 300")
   private lazy val hadoop = new SparkHadoopUtil
-  logInfo("LAMBDA: 301")
+  logDebug("LAMBDA: 301")
   private lazy val yarn = try {
     Utils.classForName("org.apache.spark.deploy.yarn.YarnSparkHadoopUtil")
       .newInstance()
@@ -414,7 +417,7 @@ object SparkHadoopUtil extends Logging {
   } catch {
     case e: Exception => throw new SparkException("Unable to load YARN support", e)
   }
-  logInfo("LAMBDA: 302")
+  logDebug("LAMBDA: 302")
 
   val SPARK_YARN_CREDS_TEMP_EXTENSION = ".tmp"
 
@@ -429,11 +432,11 @@ object SparkHadoopUtil extends Logging {
   private[spark] val UPDATE_INPUT_METRICS_INTERVAL_RECORDS = 1000
 
   def get: SparkHadoopUtil = {
-    logInfo("LAMBDA: 200")
+    logDebug("LAMBDA: 200")
     // Check each time to support changing to/from YARN
     val yarnMode = java.lang.Boolean.parseBoolean(
         System.getProperty("SPARK_YARN_MODE", System.getenv("SPARK_YARN_MODE")))
-    logInfo(s"LAMBDA: 201: $yarnMode")
+    logDebug(s"LAMBDA: 201: $yarnMode")
     // Check each time to support changing to/from YARN
     if (yarnMode) {
       yarn
@@ -441,5 +444,5 @@ object SparkHadoopUtil extends Logging {
       hadoop
     }
   }
-  logInfo("LAMBDA: 303")
+  logDebug("LAMBDA: 303")
 }

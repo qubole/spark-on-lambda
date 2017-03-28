@@ -30,6 +30,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import io.netty.buffer.Unpooled;
 import org.apache.commons.lang3.SystemUtils;
+import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -342,6 +343,14 @@ public class JavaUtils {
       buffer.get(bytes);
       return bytes;
     }
+  }
+
+  public static Path localFileToS3(String s3PrefixLocation, File path) throws IOException {
+    return new Path(s3PrefixLocation, path.getCanonicalPath());
+  }
+
+  public static File s3ToLocalFile(String s3PrefixLocation, Path path) {
+    return new File(path.toString().replace(s3PrefixLocation, ""));
   }
 
 }

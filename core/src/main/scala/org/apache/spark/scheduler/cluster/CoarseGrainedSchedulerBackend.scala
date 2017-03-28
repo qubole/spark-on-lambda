@@ -109,7 +109,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
       ThreadUtils.newDaemonSingleThreadScheduledExecutor("driver-revive-thread")
 
     override def onStart() {
-      logInfo("LAMBDA: 7001: CoarseGrainedSchedulerBackend")
+      logDebug("LAMBDA: 7001: CoarseGrainedSchedulerBackend")
       // Periodically revive offers to allow delay scheduling to work
       val reviveIntervalMs = conf.getTimeAsMs("spark.scheduler.revive.interval", "1s")
 
@@ -122,7 +122,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
 
     override def receive: PartialFunction[Any, Unit] = {
       case StatusUpdate(executorId, taskId, state, data) =>
-        logInfo("LAMBDA: 7002: CoarseGrainedSchedulerBackend")
+        logDebug("LAMBDA: 7002: CoarseGrainedSchedulerBackend")
         scheduler.statusUpdate(taskId, state, data.value)
         if (TaskState.isFinished(state)) {
           executorDataMap.get(executorId) match {
@@ -140,7 +140,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
         makeOffers()
 
       case KillTask(taskId, executorId, interruptThread) =>
-        logInfo("LAMBDA: 7004: CoarseGrainedSchedulerBackend")
+        logDebug("LAMBDA: 7004: CoarseGrainedSchedulerBackend")
         executorDataMap.get(executorId) match {
           case Some(executorInfo) =>
             executorInfo.executorEndpoint.send(KillTask(taskId, executorId, interruptThread))
@@ -169,13 +169,13 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
           addressToExecutorId(executorAddress) = executorId
           totalCoreCount.addAndGet(cores)
           totalRegisteredExecutors.addAndGet(1)
-          logInfo("LAMBDA: 3001: RegisterExecutor")
+          logDebug("LAMBDA: 3001: RegisterExecutor")
           val data = new ExecutorData(executorRef, executorRef.address, hostname,
             cores, cores, logUrls)
           // This must be synchronized because variables mutated
           // in this block are read when requesting executors
           CoarseGrainedSchedulerBackend.this.synchronized {
-            logInfo("LAMBDA: 3002: RegisterExecutor")
+            logDebug("LAMBDA: 3002: RegisterExecutor")
             executorDataMap.put(executorId, data)
             if (currentExecutorIdCounter < executorId.toInt) {
               currentExecutorIdCounter = executorId.toInt
@@ -186,33 +186,33 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
             }
           }
           executorRef.send(RegisteredExecutor)
-          logInfo("LAMBDA: 3003: RegisterExecutor")
+          logDebug("LAMBDA: 3003: RegisterExecutor")
           // Note: some tests expect the reply to come after we put the executor in the map
           context.reply(true)
-          logInfo("LAMBDA: 3004: RegisterExecutor")
+          logDebug("LAMBDA: 3004: RegisterExecutor")
           val event =
             SparkListenerExecutorAdded(System.currentTimeMillis(), executorId, data)
           logInfo(s"LAMBDA: 3005: RegisterExecutor: $event")
           listenerBus.post(event)
-          logInfo("LAMBDA: 3006: RegisterExecutor")
+          logDebug("LAMBDA: 3006: RegisterExecutor")
           makeOffers()
-          logInfo("LAMBDA: 3007: RegisterExecutor")
+          logDebug("LAMBDA: 3007: RegisterExecutor")
         }
 
       case LambdaDetails(executorId, awsRequestId, logGroupName, logStreamName) =>
-        logInfo(s"LAMBDA: 7006.A1 $executorId")
-        logInfo(s"LAMBDA: 7006.A2 $awsRequestId")
-        logInfo(s"LAMBDA: 7006.A3 $logGroupName")
-        logInfo(s"LAMBDA: 7006.A4 $logStreamName")
+        logDebug(s"LAMBDA: 7006.A1 $executorId")
+        logDebug(s"LAMBDA: 7006.A2 $awsRequestId")
+        logDebug(s"LAMBDA: 7006.A3 $logGroupName")
+        logDebug(s"LAMBDA: 7006.A4 $logStreamName")
         val event =
           SparkListenerExecutorLambdaDetails(System.currentTimeMillis(), executorId,
             awsRequestId, logGroupName, logStreamName)
-        logInfo(s"LAMBDA: 7006.A5: Send event SparkListenerExecutorLambdaDetails: $event")
+        logDebug(s"LAMBDA: 7006.A5: Send event SparkListenerExecutorLambdaDetails: $event")
         listenerBus.post(event)
-        logInfo(s"LAMBDA: 7006.A6: Sent event SparkListenerExecutorLambdaDetails")
+        logDebug(s"LAMBDA: 7006.A6: Sent event SparkListenerExecutorLambdaDetails")
 
       case StopDriver =>
-        logInfo("LAMBDA: 7006: CoarseGrainedSchedulerBackend")
+        logDebug("LAMBDA: 7006: CoarseGrainedSchedulerBackend")
         context.reply(true)
         stop()
 
@@ -274,7 +274,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     // Launch tasks returned by a set of resource offers
     private def launchTasks(tasks: Seq[Seq[TaskDescription]]) {
       for (task <- tasks.flatten) {
-        logInfo("LAMBDA: 3014: launchTasks")
+        logDebug("LAMBDA: 3014: launchTasks")
         val serializedTask = ser.serialize(task)
         if (serializedTask.limit >= maxRpcMessageSize) {
           scheduler.taskIdToTaskSetManager.get(task.taskId).foreach { taskSetMgr =>
@@ -290,7 +290,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
           }
         }
         else {
-          logInfo("LAMBDA: 3015: launchTasks")
+          logDebug("LAMBDA: 3015: launchTasks")
           val executorData = executorDataMap(task.executorId)
           executorData.freeCores -= scheduler.CPUS_PER_TASK
 
@@ -367,7 +367,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
   protected def minRegisteredRatio: Double = _minRegisteredRatio
 
   override def start() {
-    logInfo("LAMBDA: 7007: CoarseGrainedSchedulerBackend")
+    logDebug("LAMBDA: 7007: CoarseGrainedSchedulerBackend")
     val properties = new ArrayBuffer[(String, String)]
     for ((key, value) <- scheduler.sc.conf.getAll) {
       if (key.startsWith("spark.")) {
@@ -456,7 +456,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
   def sufficientResourcesRegistered(): Boolean = true
 
   override def isReady(): Boolean = {
-    logInfo("LAMBDA: 7008: CoarseGrainedSchedulerBackend")
+    logDebug("LAMBDA: 7008: CoarseGrainedSchedulerBackend")
     if (sufficientResourcesRegistered) {
       logInfo("SchedulerBackend is ready for scheduling beginning after " +
         s"reached minRegisteredResourcesRatio: $minRegisteredRatio")
@@ -484,7 +484,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
    * @return whether the request is acknowledged.
    */
   final override def requestExecutors(numAdditionalExecutors: Int): Boolean = {
-    logInfo("LAMBDA: 7009: CoarseGrainedSchedulerBackend")
+    logDebug("LAMBDA: 7009: CoarseGrainedSchedulerBackend")
     if (numAdditionalExecutors < 0) {
       throw new IllegalArgumentException(
         "Attempted to request a negative number of additional executor(s) " +
@@ -502,7 +502,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     }
 
     val returnValue = defaultAskTimeout.awaitResult(response)
-    logInfo(s"LAMBDA: 7009.A: $returnValue")
+    logDebug(s"LAMBDA: 7009.A: $returnValue")
     returnValue
   }
 
@@ -525,14 +525,14 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
       localityAwareTasks: Int,
       hostToLocalTaskCount: Map[String, Int]
     ): Boolean = {
-    logInfo("LAMBDA: 7010: CoarseGrainedSchedulerBackend")
+    logDebug("LAMBDA: 7010: CoarseGrainedSchedulerBackend")
     if (numExecutors < 0) {
       throw new IllegalArgumentException(
         "Attempted to request a negative number of executor(s) " +
           s"$numExecutors from the cluster manager. Please specify a positive number!")
     }
 
-    logInfo("LAMBDA: 7011: CoarseGrainedSchedulerBackend")
+    logDebug("LAMBDA: 7011: CoarseGrainedSchedulerBackend")
     val response = synchronized {
       this.localityAwareTasks = localityAwareTasks
       this.hostToLocalTaskCount = hostToLocalTaskCount
@@ -543,9 +543,9 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
       doRequestTotalExecutors(numExecutors)
     }
 
-    logInfo("LAMBDA: 7012: CoarseGrainedSchedulerBackend")
+    logDebug("LAMBDA: 7012: CoarseGrainedSchedulerBackend")
     val returnValue = defaultAskTimeout.awaitResult(response)
-    logInfo(s"LAMBDA: 7012.A: $returnValue")
+    logDebug(s"LAMBDA: 7012.A: $returnValue")
     returnValue
   }
 

@@ -32,13 +32,16 @@ import javax.net.ssl.HttpsURLConnection
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
+import org.apache.commons.lang3.SystemUtils
+import sun.misc.{Signal, SignalHandler}
+
+import scala.collection.JavaConversions._
 import scala.collection.Map
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import scala.reflect.ClassTag
 import scala.util.Try
 import scala.util.control.{ControlThrowable, NonFatal}
-
 import _root_.io.netty.channel.unix.Errors.NativeIoException
 import com.google.common.cache.{CacheBuilder, CacheLoader, LoadingCache}
 import com.google.common.io.{ByteStreams, Files => GFiles}
@@ -46,12 +49,12 @@ import com.google.common.net.InetAddresses
 import org.apache.commons.lang3.SystemUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, FileUtil, Path}
+import org.apache.hadoop.mapred.{FileSplit, InputSplit}
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.log4j.PropertyConfigurator
 import org.eclipse.jetty.util.MultiException
 import org.json4s._
 import org.slf4j.Logger
-
 import org.apache.spark._
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
@@ -286,9 +289,14 @@ private[spark] object Utils extends Logging {
           maxAttempts + " attempts!")
       }
       try {
-        dir = new File(root, namePrefix + "-" + UUID.randomUUID.toString)
+        if (namePrefix.contains("executor")) {
+          dir = new File(root, namePrefix + "-" + nonNegativeHash(namePrefix).toString.reverse)
+        } else {
+          dir = new File(root, namePrefix + "-" + UUID.randomUUID.toString)
+        }
+
         if (dir.exists() || !dir.mkdirs()) {
-          dir = null
+            dir = null
         }
       } catch { case e: SecurityException => dir = null; }
     }
@@ -2499,6 +2507,14 @@ private[spark] object Utils extends Logging {
    */
   def tempFileWith(path: File): File = {
     new File(path.getAbsolutePath + "." + UUID.randomUUID())
+  }
+
+  def localFileToS3(s3PrefixLocation: String, path: File) : Path = {
+    new Path(s3PrefixLocation.concat(s"/${path.getCanonicalPath}"))
+  }
+
+  def s3ToLocalFile(s3PrefixLocation: String, path: Path) : File = {
+    new File(path.toString.replace(s3PrefixLocation, ""))
   }
 
   /**

@@ -22,6 +22,7 @@ import java.io.*;
 import java.nio.channels.FileChannel;
 import java.util.Iterator;
 
+import org.apache.hadoop.fs.*;
 import scala.Option;
 import scala.Product2;
 import scala.collection.JavaConverters;
@@ -263,61 +264,92 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     final boolean compressionEnabled = sparkConf.getBoolean("spark.shuffle.compress", true);
     final CompressionCodec compressionCodec = CompressionCodec$.MODULE$.createCodec(sparkConf);
     final boolean fastMergeEnabled =
-      sparkConf.getBoolean("spark.shuffle.unsafe.fastMergeEnabled", true);
+            sparkConf.getBoolean("spark.shuffle.unsafe.fastMergeEnabled", true);
     final boolean fastMergeIsSupported = !compressionEnabled ||
-      CompressionCodec$.MODULE$.supportsConcatenationOfSerializedStreams(compressionCodec);
+            CompressionCodec$.MODULE$.supportsConcatenationOfSerializedStreams(compressionCodec);
     final boolean encryptionEnabled = blockManager.serializerManager().encryptionEnabled();
-    try {
-      if (spills.length == 0) {
-        new FileOutputStream(outputFile).close(); // Create an empty file
-        return new long[partitioner.numPartitions()];
-      } else if (spills.length == 1) {
-        // Here, we don't need to perform any metrics updates because the bytes written to this
-        // output file would have already been counted as shuffle bytes written.
-        Files.move(spills[0].file, outputFile);
-        return spills[0].partitionLengths;
-      } else {
-        final long[] partitionLengths;
-        // There are multiple spills to merge, so none of these spill files' lengths were counted
-        // towards our shuffle write count or shuffle write time. If we use the slow merge path,
-        // then the final output file's size won't necessarily be equal to the sum of the spill
-        // files' sizes. To guard against this case, we look at the output file's actual size when
-        // computing shuffle bytes written.
-        //
-        // We allow the individual merge methods to report their own IO times since different merge
-        // strategies use different IO techniques.  We count IO during merge towards the shuffle
-        // shuffle write time, which appears to be consistent with the "not bypassing merge-sort"
-        // branch in ExternalSorter.
-        if (fastMergeEnabled && fastMergeIsSupported) {
-          // Compression is disabled or we are using an IO compression codec that supports
-          // decompression of concatenated compressed streams, so we can perform a fast spill merge
-          // that doesn't need to interpret the spilled bytes.
-          if (transferToEnabled && !encryptionEnabled) {
-            logger.debug("Using transferTo-based fast merge");
-            partitionLengths = mergeSpillsWithTransferTo(spills, outputFile);
-          } else {
-            logger.debug("Using fileStream-based fast merge");
-            partitionLengths = mergeSpillsWithFileStream(spills, outputFile, null);
-          }
+    final boolean shuffleOverS3Enabled = blockManager.shuffleOverS3Enabled();
+    long[] partitionLengths;
+
+    if (shuffleOverS3Enabled) {
+      Path outputPath = Utils.localFileToS3(
+              blockManager.getS3PrefixLocation(sparkConf), outputFile);
+      FileSystem fileSystem = outputPath.getFileSystem(
+              BlockManager.getHadoopConf(sparkConf));
+      FSDataOutputStream outputStream;
+
+      try {
+        if (spills.length == 0) {
+          fileSystem.create(outputPath).close();
+          return new long[partitioner.numPartitions()];
+        } else if (spills.length == 1) {
+          outputStream = fileSystem.create(outputPath);
+          ByteStreams.copy(
+                  new FileInputStream(spills[0].file), outputStream.getWrappedStream());
+          outputStream.close();
+          return spills[0].partitionLengths;
         } else {
-          logger.debug("Using slow merge");
           partitionLengths = mergeSpillsWithFileStream(spills, outputFile, compressionCodec);
         }
-        // When closing an UnsafeShuffleExternalSorter that has already spilled once but also has
-        // in-memory records, we write out the in-memory records to a file but do not count that
-        // final write as bytes spilled (instead, it's accounted as shuffle write). The merge needs
-        // to be counted as shuffle write, but this will lead to double-counting of the final
-        // SpillInfo's bytes.
-        writeMetrics.decBytesWritten(spills[spills.length - 1].file.length());
-        writeMetrics.incBytesWritten(outputFile.length());
-        return partitionLengths;
+      } catch (IOException e) {
+        if (fileSystem.exists(outputPath) && !fileSystem.delete(outputPath, false)) {
+          logger.error("Unable to delete output path {}", outputPath);
+        }
+        throw e;
       }
-    } catch (IOException e) {
-      if (outputFile.exists() && !outputFile.delete()) {
-        logger.error("Unable to delete output file {}", outputFile.getPath());
+    } else {
+      try {
+        if (spills.length == 0) {
+          new FileOutputStream(outputFile).close(); // Create an empty file
+          return new long[partitioner.numPartitions()];
+        } else if (spills.length == 1) {
+          // Here, we don't need to perform any metrics updates because the bytes written to this
+          // output file would have already been counted as shuffle bytes written.
+          Files.move(spills[0].file, outputFile);
+          return spills[0].partitionLengths;
+        } else {
+          // There are multiple spills to merge, so none of these spill files' lengths were counted
+          // towards our shuffle write count or shuffle write time. If we use the slow merge path,
+          // then the final output file's size won't necessarily be equal to the sum of the spill
+          // files' sizes. To guard against this case, we look at the output file's actual size when
+          // computing shuffle bytes written.
+          //
+          // We allow the individual merge methods to report their own IO times since different merge
+          // strategies use different IO techniques.  We count IO during merge towards the shuffle
+          // shuffle write time, which appears to be consistent with the "not bypassing merge-sort"
+          // branch in ExternalSorter.
+          if (fastMergeEnabled && fastMergeIsSupported) {
+            // Compression is disabled or we are using an IO compression codec that supports
+            // decompression of concatenated compressed streams, so we can perform a fast spill merge
+            // that doesn't need to interpret the spilled bytes.
+            if (transferToEnabled && !encryptionEnabled) {
+              logger.debug("Using transferTo-based fast merge");
+              partitionLengths = mergeSpillsWithTransferTo(spills, outputFile);
+            } else {
+              logger.debug("Using fileStream-based fast merge");
+              partitionLengths = mergeSpillsWithFileStream(spills, outputFile, null);
+            }
+          } else {
+            logger.debug("Using slow merge");
+            partitionLengths = mergeSpillsWithFileStream(spills, outputFile, compressionCodec);
+          }
+        }
+      } catch (IOException e) {
+        if (outputFile.exists() && !outputFile.delete()) {
+          logger.error("Unable to delete output file {}", outputFile.getPath());
+        }
+        throw e;
       }
-      throw e;
     }
+    // When closing an UnsafeShuffleExternalSorter that has already spilled once but also has
+    // in-memory records, we write out the in-memory records to a file but do not count that
+    // final write as bytes spilled (instead, it's accounted as shuffle write). The merge needs
+    // to be counted as shuffle write, but this will lead to double-counting of the final
+    // SpillInfo's bytes.
+    writeMetrics.decBytesWritten(spills[spills.length - 1].file.length());
+    writeMetrics.incBytesWritten(outputFile.length());
+    logger.debug("Partition lengths : " + partitionLengths);
+    return partitionLengths;
   }
 
   /**
@@ -343,8 +375,20 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
     // Use a counting output stream to avoid having to close the underlying file and ask
     // the file system for its size after each partition is written.
-    final CountingOutputStream mergedFileOutputStream = new CountingOutputStream(
-      new FileOutputStream(outputFile));
+    final CountingOutputStream mergedFileOutputStream;
+
+    if (blockManager.shuffleOverS3Enabled()) {
+     Path outputPath = Utils.localFileToS3(
+             blockManager.getS3PrefixLocation(sparkConf), outputFile);
+     FileSystem fileSystem = outputPath.getFileSystem(
+             BlockManager.getHadoopConf(sparkConf));
+     FSDataOutputStream outputStream = fileSystem.create(outputPath);
+      mergedFileOutputStream = new CountingOutputStream(
+              outputStream.getWrappedStream());
+    } else {
+      mergedFileOutputStream = new CountingOutputStream(
+              new FileOutputStream(outputFile));
+    }
 
     boolean threwException = true;
     try {
@@ -357,7 +401,10 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
         // level streams to make sure all data is really flushed and internal state is cleaned.
         OutputStream partitionOutput = new CloseShieldOutputStream(
           new TimeTrackingOutputStream(writeMetrics, mergedFileOutputStream));
-        partitionOutput = blockManager.serializerManager().wrapForEncryption(partitionOutput);
+        if (!blockManager.shuffleOverS3Enabled()) {
+          partitionOutput = blockManager.serializerManager().wrapForEncryption(partitionOutput);
+        }
+
         if (compressionCodec != null) {
           partitionOutput = compressionCodec.compressedOutputStream(partitionOutput);
         }
@@ -367,8 +414,10 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
             InputStream partitionInputStream = new LimitedInputStream(spillInputStreams[i],
               partitionLengthInSpill, false);
             try {
-              partitionInputStream = blockManager.serializerManager().wrapForEncryption(
-                partitionInputStream);
+              if (!blockManager.shuffleOverS3Enabled()) {
+                partitionInputStream = blockManager.serializerManager().wrapForEncryption(
+                        partitionInputStream);
+              }
               if (compressionCodec != null) {
                 partitionInputStream = compressionCodec.compressedInputStream(partitionInputStream);
               }

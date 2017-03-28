@@ -79,7 +79,13 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
    */
   private[this] val numMapsForShuffle = new ConcurrentHashMap[Int, Int]()
 
-  override val shuffleBlockResolver = new IndexShuffleBlockResolver(conf)
+  val shuffleOverS3 = conf.getBoolean("spark.shuffle.s3.enabled", false)
+
+  override val shuffleBlockResolver = if (shuffleOverS3) {
+    new S3ShuffleBlockResolver(conf)
+  } else {
+    new IndexShuffleBlockResolver(conf)
+  }
 
   /**
    * Register a shuffle with the manager and obtain a handle for it to pass to tasks.
@@ -140,7 +146,7 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
       case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
         new BypassMergeSortShuffleWriter(
           env.blockManager,
-          shuffleBlockResolver.asInstanceOf[IndexShuffleBlockResolver],
+          shuffleBlockResolver,
           bypassMergeSortHandle,
           mapId,
           context,

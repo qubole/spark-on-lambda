@@ -17,6 +17,8 @@
 
 package org.apache.spark.network.util;
 
+import org.apache.hadoop.conf.Configuration;
+
 import java.util.NoSuchElementException;
 
 /**
@@ -48,5 +50,9 @@ public abstract class ConfigProvider {
 
   public boolean getBoolean(String name, boolean defaultValue) {
     return Boolean.parseBoolean(get(name, Boolean.toString(defaultValue)));
+  }
+
+  public Configuration getHadoopConf() {
+    throw new UnsupportedOperationException("Hadoop configuration is only available from HadoopConfigProvider");
   }
 }

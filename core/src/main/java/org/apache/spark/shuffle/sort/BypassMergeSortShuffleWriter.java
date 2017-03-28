@@ -23,6 +23,10 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import javax.annotation.Nullable;
 
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import scala.None$;
 import scala.Option;
 import scala.Product2;
@@ -71,6 +75,14 @@ import org.apache.spark.util.Utils;
  * <p>
  * There have been proposals to completely remove this code path; see SPARK-6026 for details.
  */
+// TODO: BHARATH: We should always enable this shuffle writer? Or each kind of shuffle writer
+// will have the ability to write to s3.
+// TODO: BHARATH: I think we should avoid making any changes in this file if possible. Instead
+// we should create a derived/sister class of DiskBlockWriter called S3BlockWriter and use
+// it in all the ShuffleWriters (BypassMerge, Sort, Unsafe). That way we can get away with
+// one implementation rather than many. Also this will help in making sure spills and other kinds
+// of disk activity to easily go to s3 (possibly). Also we can avoid doing both disk+S3 writes
+// for everything.
 final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
   private static final Logger logger = LoggerFactory.getLogger(BypassMergeSortShuffleWriter.class);
@@ -89,6 +101,12 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   /** Array of file writers, one for each partition */
   private DiskBlockObjectWriter[] partitionWriters;
   private FileSegment[] partitionWriterSegments;
+
+  /** Array of S3 file writers, one for each partition */
+  private S3BlockObjectWriter[] s3PartitionWriters;
+  // TODO: Needs to be fixed
+  private S3FileSegment[] s3PartitionWriterSegments;
+
   @Nullable private MapStatus mapStatus;
   private long[] partitionLengths;
 
@@ -98,6 +116,13 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
    * we don't try deleting files, etc twice.
    */
   private boolean stopping = false;
+
+  private SparkConf conf;
+  private boolean shuffleOverS3 = false;
+  private String s3PrefixLocation = "";
+
+  private Configuration hadoopConf;
+  private FileSystem hadoopFileSystem;
 
   BypassMergeSortShuffleWriter(
       BlockManager blockManager,
@@ -118,6 +143,11 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     this.writeMetrics = taskContext.taskMetrics().shuffleWriteMetrics();
     this.serializer = dep.serializer();
     this.shuffleBlockResolver = shuffleBlockResolver;
+    this.conf = conf;
+    this.shuffleOverS3 = conf.getBoolean("spark.shuffle.s3.enabled", shuffleOverS3);
+    this.s3PrefixLocation = conf.get("spark.qubole.s3PrefixLocation", "s3://dev.canopydata.com/vsowrira/");
+    this.hadoopConf = BlockManager.getHadoopConf(conf);
+    this.hadoopFileSystem = BlockManager.getHadoopFileSystem(conf);
   }
 
   @Override
@@ -133,6 +163,12 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     final long openStartTime = System.nanoTime();
     partitionWriters = new DiskBlockObjectWriter[numPartitions];
     partitionWriterSegments = new FileSegment[numPartitions];
+
+    if(shuffleOverS3) {
+      s3PartitionWriters = new S3BlockObjectWriter[numPartitions];
+      s3PartitionWriterSegments = new S3FileSegment[numPartitions];
+    }
+
     for (int i = 0; i < numPartitions; i++) {
       final Tuple2<TempShuffleBlockId, File> tempShuffleBlockIdPlusFile =
         blockManager.diskBlockManager().createTempShuffleBlock();
@@ -182,6 +218,11 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
    * @return array of lengths, in bytes, of each partition of the file (used by map output tracker).
    */
   private long[] writePartitionedFile(File outputFile) throws IOException {
+    if(shuffleOverS3) {
+      Path outputPath = Utils.localFileToS3(s3PrefixLocation, outputFile);
+      return writePartitionedFileToS3(outputPath);
+    }
+
     // Track location of the partition starts in the output file
     final long[] lengths = new long[numPartitions];
     if (partitionWriters == null) {
@@ -218,6 +259,45 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     return lengths;
   }
 
+  private long[] writePartitionedFileToS3(Path outputPath) throws IOException {
+    // Track location of the partition starts in the output file
+    final long[] lengths = new long[numPartitions];
+    if(partitionWriters == null) {
+      return lengths;
+    }
+
+    final FSDataOutputStream outputStream = hadoopFileSystem.create(outputPath);
+    logger.info("Writing partitioned data to {} ", outputPath);
+    final long writeStartTime = System.nanoTime();
+    boolean threwException = true;
+    try {
+      for (int i = 0; i < numPartitions; i++) {
+        final File file = partitionWriters[i].file();
+        logger.info("Trying to read from temp file {} ", file);
+        if (file.exists()) {
+          logger.info("Temp file exists: Reading from file {} ", file);
+          final FileInputStream inputStream = new FileInputStream(file);
+          boolean copyThrewException = true;
+          try {
+            lengths[i] = Utils.copyStream(inputStream, outputStream, false, false);
+            copyThrewException = false;
+          } finally {
+            Closeables.close(inputStream, copyThrewException);
+          }
+          if (!file.delete()) {
+            logger.error("Unable to delete file for partition {}", i);
+          }
+        }
+      }
+      threwException = false;
+    } finally {
+      Closeables.close(outputStream, threwException);
+      writeMetrics.incWriteTime(System.nanoTime() - writeStartTime);
+    }
+    s3PartitionWriters = null;
+    return lengths;
+  }
+
   @Override
   public Option<MapStatus> stop(boolean success) {
     if (stopping) {
@@ -242,6 +322,9 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
             }
           } finally {
             partitionWriters = null;
+            if(shuffleOverS3) {
+              s3PartitionWriters = null;
+            }
           }
         }
         return None$.empty();

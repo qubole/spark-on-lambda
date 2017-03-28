@@ -17,14 +17,16 @@
 
 package org.apache.spark.storage.memory
 
-import java.io.{OutputStream, PrintWriter, StringWriter}
+import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.util.LinkedHashMap
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
+
 import com.google.common.io.ByteStreams
+
 import org.apache.spark.{SparkConf, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.{MemoryManager, MemoryMode}
@@ -152,17 +154,6 @@ private[spark] class MemoryStore(
       }
       logInfo("Block %s stored as bytes in memory (estimated size %s, free %s)".format(
         blockId, Utils.bytesToString(size), Utils.bytesToString(maxMemory - blocksMemoryUsed)))
-
-      /*
-      try {
-        throw new Exception("Hello, Lambda 3!")
-      } catch {
-        case e: Exception =>
-          val sw = new StringWriter
-          e.printStackTrace(new PrintWriter(sw))
-          logInfo(sw.toString)
-      }
-      */
       true
     } else {
       false
@@ -280,17 +271,6 @@ private[spark] class MemoryStore(
         }
         logInfo("Block %s stored as values in memory (estimated size %s, free %s)".format(
           blockId, Utils.bytesToString(size), Utils.bytesToString(maxMemory - blocksMemoryUsed)))
-
-        /*
-        try {
-          throw new Exception("Hello, Lambda 1!")
-        } catch {
-          case e: Exception =>
-            val sw = new StringWriter
-            e.printStackTrace(new PrintWriter(sw))
-            logInfo(sw.toString)
-        }
-        */
         Right(size)
       } else {
         assert(currentUnrollMemoryForThisTask >= unrollMemoryUsedByThisBlock,
@@ -407,18 +387,6 @@ private[spark] class MemoryStore(
       logInfo("Block %s stored as bytes in memory (estimated size %s, free %s)".format(
         blockId, Utils.bytesToString(entry.size),
         Utils.bytesToString(maxMemory - blocksMemoryUsed)))
-
-      /*
-      try {
-        throw new Exception("Hello, Lambda 2!")
-      } catch {
-        case e: Exception =>
-          val sw = new StringWriter
-          e.printStackTrace(new PrintWriter(sw))
-          logInfo(sw.toString)
-      }
-      */
-
       Right(entry.size)
     } else {
       // We ran out of space while unrolling the values for this block

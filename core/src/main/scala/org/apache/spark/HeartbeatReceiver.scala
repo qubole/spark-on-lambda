@@ -107,11 +107,11 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
 
     // Messages sent and received locally
     case ExecutorRegistered(executorId) =>
-      logInfo("LAMBDA: 2001: ExecutorRegistered")
+      logDebug("LAMBDA: 2001: ExecutorRegistered")
       executorLastSeen(executorId) = clock.getTimeMillis()
       context.reply(true)
     case ExecutorRemoved(executorId) =>
-      logInfo("LAMBDA: 2002: ExecutorRemoved")
+      logDebug("LAMBDA: 2002: ExecutorRemoved")
       executorLastSeen.remove(executorId)
       context.reply(true)
     case TaskSchedulerIsSet =>
@@ -141,7 +141,7 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
           // after we just removed it. It's not really an error condition so we should
           // not log warning here. Otherwise there may be a lot of noise especially if
           // we explicitly remove executors (SPARK-4134).
-          logInfo(s"LAMBDA: 2006: Heartbeat")
+          logDebug(s"LAMBDA: 2006: Heartbeat")
           logDebug(s"Received heartbeat from unknown executor $executorId")
           context.reply(HeartbeatResponse(reregisterBlockManager = true))
         }
@@ -161,7 +161,7 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
    *         indicate if this operation is successful.
    */
   def addExecutor(executorId: String): Option[Future[Boolean]] = {
-    logInfo(s"LAMBDA: 2007: addExecutor")
+    logDebug(s"LAMBDA: 2007: addExecutor")
     Option(self).map(_.ask[Boolean](ExecutorRegistered(executorId)))
   }
 
@@ -169,7 +169,7 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
    * If the heartbeat receiver is not stopped, notify it of executor registrations.
    */
   override def onExecutorAdded(executorAdded: SparkListenerExecutorAdded): Unit = {
-    logInfo(s"LAMBDA: 2008: onExecutorAdded")
+    logDebug(s"LAMBDA: 2008: onExecutorAdded")
     addExecutor(executorAdded.executorId)
   }
 
