@@ -289,7 +289,7 @@ private[spark] object Utils extends Logging {
           maxAttempts + " attempts!")
       }
       try {
-        if (namePrefix.contains("executor")) {
+        if (!namePrefix.equalsIgnoreCase("executor-driver") && namePrefix.contains("executor")) {
           dir = new File(root, namePrefix + "-" + nonNegativeHash(namePrefix).toString.reverse)
         } else {
           dir = new File(root, namePrefix + "-" + UUID.randomUUID.toString)
@@ -794,6 +794,10 @@ private[spark] object Utils extends Logging {
       // Note that we don't want this if the shuffle service is enabled because we want to
       // continue to serve shuffle files after the executors that wrote them have already exited.
       Array(conf.getenv("MESOS_DIRECTORY"))
+    } else if (conf.get("spark.master").contains("lambda")) {
+      val sparkApplicationId = conf.get("spark.app.id")
+      val lambdaTmp = System.getProperty("java.io.tmpdir").split(",").map(tmp => tmp.concat(s"/${sparkApplicationId}"))
+      lambdaTmp
     } else {
       if (conf.getenv("MESOS_DIRECTORY") != null && shuffleServiceEnabled) {
         logInfo("MESOS_DIRECTORY available but not using provided Mesos sandbox because " +
