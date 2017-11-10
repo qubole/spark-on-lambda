@@ -171,7 +171,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
           totalRegisteredExecutors.addAndGet(1)
           logDebug("LAMBDA: 3001: RegisterExecutor")
           val data = new ExecutorData(executorRef, executorRef.address, hostname,
-            cores, cores, logUrls)
+            cores, cores, logUrls, System.currentTimeMillis())
           // This must be synchronized because variables mutated
           // in this block are read when requesting executors
           CoarseGrainedSchedulerBackend.this.synchronized {
@@ -241,7 +241,14 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     private def makeOffers() {
       // Filter out executors under killing
       val activeExecutors = executorDataMap.filterKeys(executorIsAlive)
-      val workOffers = activeExecutors.map { case (id, executorData) =>
+      val currentTime = System.currentTimeMillis()
+      val executorDecommisioningInterval = conf.getTimeAsMs("spark.qubole.lambda.decommisioningInterval", "240s")
+      // Filter out executors which are going to die
+      val updatedActiveExecutors = activeExecutors.filter { case (id, executorData) =>
+        val executorElapsedTime = System.currentTimeMillis() - executorData.executorStartTime
+        executorElapsedTime < executorDecommisioningInterval
+      }
+      val workOffers = updatedActiveExecutors.map { case (id, executorData) =>
         new WorkerOffer(id, executorData.executorHost, executorData.freeCores)
       }.toIndexedSeq
       launchTasks(scheduler.resourceOffers(workOffers))
@@ -259,10 +266,14 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     private def makeOffers(executorId: String) {
       // Filter out executors under killing
       if (executorIsAlive(executorId)) {
+        val executorDecommisioningInterval = conf.getTimeAsMs("spark.qubole.lambda.decommisioningInterval", "240s")
         val executorData = executorDataMap(executorId)
-        val workOffers = IndexedSeq(
-          new WorkerOffer(executorId, executorData.executorHost, executorData.freeCores))
-        launchTasks(scheduler.resourceOffers(workOffers))
+        val executorElapsedTime = System.currentTimeMillis() - executorData.executorStartTime
+        if (executorElapsedTime < executorDecommisioningInterval) {
+          val workOffers = IndexedSeq(
+            new WorkerOffer(executorId, executorData.executorHost, executorData.freeCores))
+          launchTasks(scheduler.resourceOffers(workOffers))
+        }
       }
     }
 
