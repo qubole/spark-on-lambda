@@ -40,11 +40,9 @@ private[spark] class S3ShuffleBlockResolver(
     _blockManager: BlockManager = null)
     extends IndexShuffleBlockResolver(conf, _blockManager = null)
     with Logging {
-  val shuffleOverS3 = conf.getBoolean("spark.shuffle.s3.enabled", false)
-  val s3PrefixLocation = conf.get("spark.qubole.s3PrefixLocation",
-    "s3://dev.canopydata.com/vsowrira/")
-
   private lazy val blockManager = Option(_blockManager).getOrElse(SparkEnv.get.blockManager)
+
+  val shuffleS3Bucket = BlockManager.getS3Bucket(conf)
 
   private lazy val hadoopConf = BlockManager.getHadoopConf(conf)
 
@@ -84,7 +82,7 @@ private[spark] class S3ShuffleBlockResolver(
     * If so, return the partition lengths in the data file. Otherwise return null.
     */
   private def checkIndexAndDataFile(index: File, data: File, blocks: Int): Array[Long] = {
-    val indexFilePath = Utils.localFileToS3(s3PrefixLocation, index)
+    val indexFilePath = Utils.localFileToS3(shuffleS3Bucket, index)
     try {
       if (hadoopFileSystem.getFileStatus(indexFilePath).getLen != (blocks + 1) * 8) {
         return null
@@ -124,7 +122,7 @@ private[spark] class S3ShuffleBlockResolver(
       in.close()
     }
 
-    val dataPath = Utils.localFileToS3(s3PrefixLocation, data)
+    val dataPath = Utils.localFileToS3(shuffleS3Bucket, data)
 
     if (hadoopFileSystem.getFileStatus(dataPath).getLen == lengths.sum) {
       logInfo(s"${dataPath} lengths (${lengths.sum}) match with index file length")
@@ -153,8 +151,8 @@ private[spark] class S3ShuffleBlockResolver(
     val indexFile = getIndexFile(shuffleId, mapId)
     val indexTmp = Utils.tempFileWith(indexFile)
 
-    val indexFilePath = Utils.localFileToS3(s3PrefixLocation, indexFile)
-    val indexTmpPath = Utils.localFileToS3(s3PrefixLocation, indexTmp)
+    val indexFilePath = Utils.localFileToS3(shuffleS3Bucket, indexFile)
+    val indexTmpPath = Utils.localFileToS3(shuffleS3Bucket, indexTmp)
 
     try {
       val outputStream = hadoopFileSystem.create(indexTmpPath)
@@ -171,8 +169,8 @@ private[spark] class S3ShuffleBlockResolver(
       }
 
       val dataFile = getDataFile(shuffleId, mapId)
-      val dataFilePath = Utils.localFileToS3(s3PrefixLocation, dataFile)
-      val dataTmpPath = Utils.localFileToS3(s3PrefixLocation, dataTmp)
+      val dataFilePath = Utils.localFileToS3(shuffleS3Bucket, dataFile)
+      val dataTmpPath = Utils.localFileToS3(shuffleS3Bucket, dataTmp)
       // There is only one IndexShuffleBlockResolver per executor, this synchronization make sure
       // the following check and rename are atomic.
       synchronized {
@@ -238,7 +236,7 @@ private[spark] class S3ShuffleBlockResolver(
     }
 
     val indexFile = getFile(executorLocalDirs, subDirs, shuffleIndexFile)
-    val indexFilePath = Utils.localFileToS3(s3PrefixLocation, indexFile)
+    val indexFilePath = Utils.localFileToS3(shuffleS3Bucket, indexFile)
     val in = hadoopFileSystem.open(indexFilePath)
 
     try {
@@ -246,7 +244,7 @@ private[spark] class S3ShuffleBlockResolver(
       val offset = in.readLong()
       val nextOffset = in.readLong()
       val dataFile = getFile(executorLocalDirs, subDirs, shuffleDataFile)
-      val dataFilePath = Utils.localFileToS3(s3PrefixLocation, dataFile)
+      val dataFilePath = Utils.localFileToS3(shuffleS3Bucket, dataFile)
 
       logDebug("S3Segment managed buffer created for path - " + dataFilePath.toString)
 

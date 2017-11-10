@@ -40,9 +40,9 @@ private[spark] class DiskBlockManager(executorId: String, conf: SparkConf, delet
 
   // TODO: BHARATH: I think we should think of eliminating this as a flag (if possible)
   // and instead create derived class which encapsulate the behaviour with that being true.
-  private val shuffleOverS3 = conf.getBoolean("spark.shuffle.s3.enabled", false)
+  private val shuffleOverS3 = BlockManager.shuffleOverS3Enabled(conf)
 
-  private val s3PrefixLocation = conf.get("spark.qubole.s3PrefixLocation", "s3://dev.canopydata.com/vsowrira/")
+  private val shuffleS3Bucket = BlockManager.getS3Bucket(conf)
 
   private lazy val hadoopConf = BlockManager.getHadoopConf(conf)
 
@@ -82,7 +82,7 @@ private[spark] class DiskBlockManager(executorId: String, conf: SparkConf, delet
           throw new IOException(s"Failed to create local dir in $newDir.")
         }
 
-        val path = Utils.localFileToS3(s3PrefixLocation, newDir)
+        val path = Utils.localFileToS3(shuffleS3Bucket, newDir)
         logInfo(s"Creating a dir ${path}")
         logInfo(s"Creating a dir ${path.getName}")
         if(shuffleOverS3 && !hadoopMkdir(path)) {

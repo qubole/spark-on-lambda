@@ -68,9 +68,9 @@ private[spark] class CoarseGrainedExecutorBackend(
         exitExecutor(1, s"Cannot register with driver: $driverUrl", e, notifyDriver = false)
     }(ThreadUtils.sameThread)
 
-    val requestId = env.conf.get("spark.qubole.lambda.awsRequestId")
-    val logGroupName = env.conf.get("spark.qubole.lambda.logGroupName")
-    val logStreamName = env.conf.get("spark.qubole.lambda.logStreamName")
+    val requestId = env.conf.get("spark.lambda.awsRequestId")
+    val logGroupName = env.conf.get("spark.lambda.logGroupName")
+    val logStreamName = env.conf.get("spark.lambda.logStreamName")
     rpcEnv.asyncSetupEndpointRefByURI(driverUrl).flatMap { ref =>
       // This is a very fast action so we can use "ThreadUtils.sameThread"
       driver = Some(ref)

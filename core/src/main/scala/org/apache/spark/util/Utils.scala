@@ -795,7 +795,7 @@ private[spark] object Utils extends Logging {
       // continue to serve shuffle files after the executors that wrote them have already exited.
       Array(conf.getenv("MESOS_DIRECTORY"))
     } else if (conf.get("spark.master").contains("lambda")) {
-      val sparkApplicationId = conf.get("spark.app.id")
+      val sparkApplicationId = conf.get("spark.app.id", "")
       val lambdaTmp = System.getProperty("java.io.tmpdir").split(",").map(tmp => tmp.concat(s"/${sparkApplicationId}"))
       lambdaTmp
     } else {
@@ -2513,12 +2513,12 @@ private[spark] object Utils extends Logging {
     new File(path.getAbsolutePath + "." + UUID.randomUUID())
   }
 
-  def localFileToS3(s3PrefixLocation: String, path: File) : Path = {
-    new Path(s3PrefixLocation.concat(s"/${path.getCanonicalPath}"))
+  def localFileToS3(shuffleS3Bucket: String, path: File) : Path = {
+    new Path(shuffleS3Bucket.concat(s"/${path.getCanonicalPath}"))
   }
 
-  def s3ToLocalFile(s3PrefixLocation: String, path: Path) : File = {
-    new File(path.toString.replace(s3PrefixLocation, ""))
+  def s3ToLocalFile(shuffleS3Bucket: String, path: Path) : File = {
+    new File(path.toString.replace(shuffleS3Bucket, ""))
   }
 
   /**

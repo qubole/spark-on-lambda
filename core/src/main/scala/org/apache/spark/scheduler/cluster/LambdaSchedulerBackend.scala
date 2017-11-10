@@ -20,6 +20,7 @@ package org.apache.spark.scheduler.cluster
 import java.util.concurrent.atomic.AtomicInteger
 
 import com.amazonaws.ClientConfiguration
+import com.amazonaws.auth.{AWSStaticCredentialsProvider, BasicAWSCredentials}
 import com.amazonaws.services.lambda.AWSLambdaClientBuilder
 import com.amazonaws.services.lambda.invoke.{LambdaFunction, LambdaInvokerFactory}
 import com.amazonaws.services.lambda.model.InvokeRequest
@@ -126,8 +127,8 @@ private[spark] class LambdaSchedulerBackend(
   extends CoarseGrainedSchedulerBackend(scheduler, sc.env.rpcEnv)
   with Logging {
 
-  val lambdaFunctionName = sc.conf.get("spark.qubole.lambda.function.name", "get_spark_from_s3")
-  val s3SparkVersion = sc.conf.get("spark.qubole.lambda.spark.software.version", "LATEST")
+  val lambdaFunctionName = sc.conf.get("spark.lambda.function.name", "get_spark_from_s3")
+  val s3SparkVersion = sc.conf.get("spark.lambda.spark.software.version", "LATEST")
   var numExecutorsExpected = 0
   var numExecutorsRegistered = new AtomicInteger(0)
   var executorId = new AtomicInteger(0)
@@ -137,7 +138,7 @@ private[spark] class LambdaSchedulerBackend(
   // Set of executorIds which are currently alive
   val liveExecutors = new HashSet[String]
 
-  var lambdaContainerMemoryBytes: Int = 0
+  var lambdaContainerMemory: Int = 0
   var lambdaContainerTimeoutSecs: Int = 0
 
   val clientConfig = new ClientConfiguration()
@@ -146,21 +147,31 @@ private[spark] class LambdaSchedulerBackend(
   clientConfig.setRequestTimeout(345680)
   clientConfig.setSocketTimeout(345681)
 
+  val lambdaBucket = Option(sc.getConf.get("spark.lambda.s3.bucket"))
+
+  if (!lambdaBucket.isDefined) {
+    throw new Exception(s"spark.lambda.s3.bucket should" +
+      s" have a valid S3 bucket name having Spark binaries")
+  }
+
+  val lambdaClient = AWSLambdaClientBuilder
+                        .standard()
+                        .withClientConfiguration(clientConfig)
+                        .build()
+
   final val lambdaExecutorService: LambdaExecutorService =
     LambdaInvokerFactory.builder()
-    .lambdaClient(AWSLambdaClientBuilder.standard().withClientConfiguration(clientConfig).build())
+    .lambdaClient(lambdaClient)
     .build(classOf[LambdaExecutorService])
   logInfo(s"Created LambdaExecutorService: $lambdaExecutorService")
 
-  val maxConcurrentRequests = sc.conf.getInt("spark.qubole.lambda.concurrent.requests.max", 100)
+  val maxConcurrentRequests = sc.conf.getInt("spark.lambda.concurrent.requests.max", 100)
   val limiter = RateLimiter.create(maxConcurrentRequests)
 
   override def start() {
     super.start()
     logInfo("start")
     numExecutorsExpected = getInitialTargetExecutorNumber(conf)
-
-    val lambdaClient = AWSLambdaClientBuilder.defaultClient()
 
     val request = new com.amazonaws.services.lambda.model.GetFunctionRequest
     request.setFunctionName(lambdaFunctionName)
@@ -170,7 +181,7 @@ private[spark] class LambdaSchedulerBackend(
     val request2 = new com.amazonaws.services.lambda.model.GetFunctionConfigurationRequest
     request2.setFunctionName(lambdaFunctionName)
     val result2 = lambdaClient.getFunctionConfiguration(request2)
-    lambdaContainerMemoryBytes = result2.getMemorySize * 1024 * 1024
+    lambdaContainerMemory = result2.getMemorySize
     lambdaContainerTimeoutSecs = result2.getTimeout
     logDebug(s"LAMBDA: 16001: Function configuration: ${result2.toString}")
 
@@ -191,97 +202,11 @@ private[spark] class LambdaSchedulerBackend(
 
   override def applicationId(): String = {
     val appId = super.applicationId()
-    logInfo(s"applicationId: $appId")
+    logDebug(s"applicationId: $appId")
     return appId
   }
 
   private def launchExecutorsOnLambda(newExecutorsNeeded: Int) : Future[Boolean] = {
-    Future {
-      // TODO: Can we launch in parallel?
-      // TODO: Can we track each thread separately and audit
-      (1 to newExecutorsNeeded).foreach { x =>
-        val request = new Request
-        request.setSparkS3Bucket("bharatb")
-        request.setSparkS3Key(s"lambda/spark-small-${s3SparkVersion}.zip")
-        request.setHadoop2S3Bucket("bharatb")
-        request.setHadoop2S3Key(s"lambda/hadoop2-small-${s3SparkVersion}.zip")
-        request.setHive12S3Bucket("bharatb")
-        request.setHive12S3Key(s"lambda/hive1.2-small-${s3SparkVersion}.zip")
-        val hostname = sc.env.rpcEnv.address.host
-        val port = sc.env.rpcEnv.address.port.toString
-        request.setSparkDriverHostname(hostname)
-        request.setSparkDriverPort(port)
-
-        val classpathSeq = Seq("spark/assembly/target/scala-2.11/jars/*",
-          "spark/conf",
-          "hadoop2/share/hadoop/*",
-          "hadoop2/share/hadoop/common/lib/*",
-          "hadoop2/share/hadoop/common/*",
-          "hadoop2/share/hadoop/hdfs",
-          "hadoop2/share/hadoop/hdfs/lib/*",
-          "hadoop2/share/hadoop/hdfs/*",
-          "hadoop2/share/hadoop/yarn/lib/*",
-          "hadoop2/share/hadoop/yarn/*",
-          "hadoop2/share/hadoop/mapreduce/*",
-          "hadoop2/share/hadoop/tools/lib/*",
-          "hadoop2/share/hadoop/tools/*",
-          "hadoop2/share/hadoop/qubole/lib/*",
-          "hadoop2/share/hadoop/qubole/*",
-          "hadoop2/etc/hadoop/*",
-          "hive1.2/lib/*"
-        )
-        val classpaths = classpathSeq.map(x => s"/tmp/lambda/$x").mkString(":")
-        val currentExecutorId = executorId.addAndGet(1)
-        val containerId = applicationId() + "_%08d".format(currentExecutorId)
-        request.setSparkCommandLine(
-          s"java -cp ${classpaths} " +
-            "-server -Xmx1400m " +
-            "-Djava.net.preferIPv4Stack=true " +
-            s"-Dspark.driver.port=${port} " +
-            // "-Dspark.blockManager.port=12345 " +
-            "-Dspark.dynamicAllocation.enabled=true " +
-            "-Dspark.shuffle.service.enabled=false " +
-            "org.apache.spark.executor.CoarseGrainedExecutorBackend " +
-            s"--driver-url spark://CoarseGrainedScheduler@${hostname}:${port} " +
-            s"--executor-id ${currentExecutorId} " +
-            "--hostname LAMBDA " +
-            "--cores 1 " +
-            s"--app-id ${applicationId()} " +
-            s"--container-id ${containerId} " +
-            s"--container-size ${lambdaContainerMemoryBytes} " +
-            "--user-class-path file:/tmp/lambda/* "
-        )
-
-        val lambdaRequesterThread = new Thread() {
-          override def run() {
-            val executorId = currentExecutorId.toString
-            logDebug(s"LAMBDA: 9002: Invoking lambda for $executorId: $request")
-            numLambdaCallsPending.addAndGet(1)
-            try {
-              val response = lambdaExecutorService.runExecutor(request)
-              logDebug(s"LAMBDA: 9003: Returned from lambda $executorId: $response")
-            } catch {
-              case t: Throwable => logError(s"Exception in Lambda invocation: $t")
-            } finally {
-              logDebug(s"LAMBDA: 9003: Returned from lambda $executorId: finally block")
-              numLambdaCallsPending.addAndGet(-1)
-              pendingLambdaRequests.remove(executorId)
-            }
-          }
-        }
-        lambdaRequesterThread.setDaemon(true)
-        lambdaRequesterThread.setName(s"Lambda Requester Thread for $currentExecutorId")
-        pendingLambdaRequests(currentExecutorId.toString) = lambdaRequesterThread
-        logDebug(s"LAMBDA: 9004: starting lambda requester thread for $currentExecutorId")
-        lambdaRequesterThread.start()
-
-        logDebug(s"LAMBDA: 9005: returning from launchExecutorsOnLambda for $currentExecutorId")
-      }
-      true // TODO: Return true/false properly
-    }
-  }
-
-  private def launchExecutorsOnLambda2(newExecutorsNeeded: Int) : Future[Boolean] = {
     Future {
       // TODO: Can we launch in parallel?
       // TODO: Can we track each thread separately and audit
@@ -311,12 +236,12 @@ private[spark] class LambdaSchedulerBackend(
         val containerId = applicationId() + "_%08d".format(currentExecutorId)
 
         val javaPartialCommandLine = s"java -cp ${classpaths} " +
-            "-server -Xmx1400m " +
+            s"-server -Xmx${lambdaContainerMemory}m " +
             "-Djava.net.preferIPv4Stack=true " +
             s"-Dspark.driver.port=${port} " +
-            // "-Dspark.blockManager.port=12345 " +
             "-Dspark.dynamicAllocation.enabled=true " +
             "-Dspark.shuffle.service.enabled=false "
+
         val executorPartialCommandLine = "org.apache.spark.executor.CoarseGrainedExecutorBackend " +
             s"--driver-url spark://CoarseGrainedScheduler@${hostname}:${port} " +
             s"--executor-id ${currentExecutorId} " +
@@ -324,16 +249,17 @@ private[spark] class LambdaSchedulerBackend(
             "--cores 1 " +
             s"--app-id ${applicationId()} " +
             s"--container-id ${containerId} " +
-            s"--container-size ${lambdaContainerMemoryBytes} " +
+            s"--container-size ${lambdaContainerMemory} " +
             "--user-class-path file:/tmp/lambda/* "
+
         val commandLine = javaPartialCommandLine + executorPartialCommandLine
 
         val request = new LambdaRequestPayload(
-          sparkS3Bucket = "bharatb",
+          sparkS3Bucket = lambdaBucket.get,
           sparkS3Key = s"lambda/spark-small-${s3SparkVersion}.zip",
-          hadoop2S3Bucket = "bharatb",
+          hadoop2S3Bucket = lambdaBucket.get,
           hadoop2S3Key = s"lambda/hadoop2-small-${s3SparkVersion}.zip",
-          hive12S3Bucket = "bharatb",
+          hive12S3Bucket = lambdaBucket.get,
           hive12S3Key = s"lambda/hive1.2-small-${s3SparkVersion}.zip",
           sparkDriverHostname = hostname,
           sparkDriverPort = port,
@@ -349,9 +275,7 @@ private[spark] class LambdaSchedulerBackend(
             limiter.acquire()
             logDebug(s"LAMBDA: 9050.1: LambdaRequesterThread started $executorId")
             numLambdaCallsPending.addAndGet(1)
-            // TODO: Can we reuse the same client across calls?
-            val lambdaClient = AWSLambdaClientBuilder.standard()
-              .withClientConfiguration(clientConfig).build()
+
             val invokeRequest = new InvokeRequest
             try {
               invokeRequest.setFunctionName(lambdaFunctionName)
@@ -396,11 +320,11 @@ private[spark] class LambdaSchedulerBackend(
     if (newExecutorsNeeded <= 0) {
       return Future { true }
     }
-    return launchExecutorsOnLambda2(newExecutorsNeeded)
+    return launchExecutorsOnLambda(newExecutorsNeeded)
   }
 
   override def doKillExecutors(executorIds: Seq[String]): Future[Boolean] = {
-    // TODO: Fill this function
+    // TODO: Right now not implemented
     logDebug(s"LAMBDA: 10200: doKillExecutors: $executorIds")
     Future {
       executorIds.foreach { x =>

@@ -119,7 +119,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
   private SparkConf conf;
   private boolean shuffleOverS3 = false;
-  private String s3PrefixLocation = "";
+  private String shuffleS3Bucket = "";
 
   private Configuration hadoopConf;
   private FileSystem hadoopFileSystem;
@@ -144,8 +144,8 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     this.serializer = dep.serializer();
     this.shuffleBlockResolver = shuffleBlockResolver;
     this.conf = conf;
-    this.shuffleOverS3 = conf.getBoolean("spark.shuffle.s3.enabled", shuffleOverS3);
-    this.s3PrefixLocation = conf.get("spark.qubole.s3PrefixLocation", "s3://dev.canopydata.com/vsowrira/");
+    this.shuffleOverS3 = blockManager.shuffleOverS3Enabled();
+    this.shuffleS3Bucket = BlockManager.getS3Bucket(conf);
     this.hadoopConf = BlockManager.getHadoopConf(conf);
     this.hadoopFileSystem = BlockManager.getHadoopFileSystem(conf);
   }
@@ -219,7 +219,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
    */
   private long[] writePartitionedFile(File outputFile) throws IOException {
     if(shuffleOverS3) {
-      Path outputPath = Utils.localFileToS3(s3PrefixLocation, outputFile);
+      Path outputPath = Utils.localFileToS3(shuffleS3Bucket, outputFile);
       return writePartitionedFileToS3(outputPath);
     }
 

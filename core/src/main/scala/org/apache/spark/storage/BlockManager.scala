@@ -78,7 +78,7 @@ private[spark] class BlockManager(
     conf.getBoolean("spark.shuffle.service.enabled", false)
 
   private[spark] val shuffleOverS3Enabled =
-    conf.getBoolean("spark.shuffle.s3.enabled", false)
+    BlockManager.shuffleOverS3Enabled(conf)
 
   val diskBlockManager = {
     // Only perform cleanup if an external service is not serving our shuffle files.
@@ -851,7 +851,7 @@ private[spark] class BlockManager(
       bufferSize: Int,
       writeMetrics: ShuffleWriteMetrics): S3BlockObjectWriter = {
     val syncWrites = conf.getBoolean("spark.shuffle.sync", false)
-    val path = Utils.localFileToS3(BlockManager.getS3PrefixLocation(conf), file)
+    val path = Utils.localFileToS3(BlockManager.getS3Bucket(conf), file)
     new S3BlockObjectWriter(file, path, BlockManager.getHadoopConf(conf),
       serializerManager, serializerInstance, bufferSize, syncWrites, writeMetrics, blockId)
   }
@@ -1501,8 +1501,10 @@ private[spark] object BlockManager {
     blockManagers.toMap
   }
 
-  def getS3PrefixLocation(conf: SparkConf): String = {
-    conf.get("spark.qubole.s3PrefixLocation", "s3://dev.canopydata.com/vsowrira/")
+  def shuffleOverS3Enabled(conf: SparkConf): Boolean = conf.getBoolean("spark.shuffle.s3.enabled", false)
+
+  def getS3Bucket(conf: SparkConf): String = {
+    conf.get("spark.shuffle.s3.bucket", conf.get("spark.lambda.s3.bucket"))
   }
 
   def getHadoopConf(conf: SparkConf) : Configuration = {
@@ -1519,7 +1521,7 @@ private[spark] object BlockManager {
     hadoopFileSystem match {
       case Some(fs) => fs
       case _ => {
-        hadoopFileSystem = Some(new Path(getS3PrefixLocation(conf)).getFileSystem(getHadoopConf(conf)))
+        hadoopFileSystem = Some(new Path(getS3Bucket(conf)).getFileSystem(getHadoopConf(conf)))
         hadoopFileSystem.get
       }
     }

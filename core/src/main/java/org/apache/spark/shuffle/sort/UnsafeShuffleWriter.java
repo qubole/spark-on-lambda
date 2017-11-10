@@ -273,7 +273,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
     if (shuffleOverS3Enabled) {
       Path outputPath = Utils.localFileToS3(
-              blockManager.getS3PrefixLocation(sparkConf), outputFile);
+              blockManager.getS3Bucket(sparkConf), outputFile);
       FileSystem fileSystem = outputPath.getFileSystem(
               BlockManager.getHadoopConf(sparkConf));
       FSDataOutputStream outputStream;
@@ -379,7 +379,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
     if (blockManager.shuffleOverS3Enabled()) {
      Path outputPath = Utils.localFileToS3(
-             blockManager.getS3PrefixLocation(sparkConf), outputFile);
+             blockManager.getS3Bucket(sparkConf), outputFile);
      FileSystem fileSystem = outputPath.getFileSystem(
              BlockManager.getHadoopConf(sparkConf));
      FSDataOutputStream outputStream = fileSystem.create(outputPath);

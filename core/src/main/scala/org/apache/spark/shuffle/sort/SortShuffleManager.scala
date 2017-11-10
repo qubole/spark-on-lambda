@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
+import org.apache.spark.storage.BlockManager
 
 /**
  * In sort-based shuffle, incoming records are sorted according to their target partition ids, then
@@ -79,7 +80,7 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
    */
   private[this] val numMapsForShuffle = new ConcurrentHashMap[Int, Int]()
 
-  val shuffleOverS3 = conf.getBoolean("spark.shuffle.s3.enabled", false)
+  val shuffleOverS3 = BlockManager.shuffleOverS3Enabled(conf)
 
   override val shuffleBlockResolver = if (shuffleOverS3) {
     new S3ShuffleBlockResolver(conf)

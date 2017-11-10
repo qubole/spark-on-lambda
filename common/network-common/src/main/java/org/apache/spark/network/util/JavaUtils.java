@@ -345,12 +345,4 @@ public class JavaUtils {
     }
   }
 
-  public static Path localFileToS3(String s3PrefixLocation, File path) throws IOException {
-    return new Path(s3PrefixLocation, path.getCanonicalPath());
-  }
-
-  public static File s3ToLocalFile(String s3PrefixLocation, Path path) {
-    return new File(path.toString().replace(s3PrefixLocation, ""));
-  }
-
 }
