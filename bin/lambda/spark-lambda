@@ -1,0 +1,27 @@
+set -x
+set -e
+
+# To compile - 
+
+if [ "$#" -ne 3 ]; then
+  echo "Usage: $0 LAMBDA_VERSION (Spark package downloaded on lambda side eg: 1) SPARK_PACKAGE (created package name eg: spark-2.1.0-bin-spark-lambda-2.1.0.tgz) S3_BUCKET (s3://lambda/)"
+  exit
+fi
+
+LAMBDA_VERSION=$1
+SPARK_PACKAGE=$2
+S3_BUCKET=$3
+
+tar xvf $SPARK_PACKAGE
+SPARK_LOC="${SPARK_PACKAGE%.*}"
+
+mv $SPARK_LOC spark
+LAMBDA_ARCHIVE="spark-lambda-${LAMBDA_VERSION}.zip"
+
+zip -q -r $LAMBDA_ARCHIVE spark/
+
+rm -rf spark/
+
+aws s3 cp $LAMBDA_ARCHIVE "${S3_BUCKET}/lambda/"
+
+rm -rf $LAMBDA_ARCHIVE

@@ -20,7 +20,6 @@ package org.apache.spark.scheduler.cluster
 import java.util.concurrent.atomic.AtomicInteger
 
 import com.amazonaws.ClientConfiguration
-import com.amazonaws.auth.{AWSStaticCredentialsProvider, BasicAWSCredentials}
 import com.amazonaws.services.lambda.AWSLambdaClientBuilder
 import com.amazonaws.services.lambda.invoke.{LambdaFunction, LambdaInvokerFactory}
 import com.amazonaws.services.lambda.model.InvokeRequest
@@ -48,22 +47,6 @@ class Request {
   def getSparkS3Key: String = sparkS3Key
   def setSparkS3Key(i: String): Unit = { sparkS3Key = i }
 
-  var hadoop2S3Bucket: String = _
-  def getHadoop2S3Bucket: String = hadoop2S3Bucket
-  def setHadoop2S3Bucket(i: String): Unit = { hadoop2S3Bucket = i }
-
-  var hadoop2S3Key: String = _
-  def getHadoop2S3Key: String = hadoop2S3Key
-  def setHadoop2S3Key(i: String): Unit = { hadoop2S3Key = i }
-
-  var hive12S3Bucket: String = _
-  def getHive12S3Bucket: String = hive12S3Bucket
-  def setHive12S3Bucket(i: String): Unit = { hive12S3Bucket = i }
-
-  var hive12S3Key: String = _
-  def getHive12S3Key: String = hive12S3Key
-  def setHive12S3Key(i: String): Unit = { hive12S3Key = i }
-
   var sparkDriverHostname: String = _
   def getSparkDriverHostname: String = sparkDriverHostname
   def setSparkDriverHostname(i: String): Unit = { sparkDriverHostname = i }
@@ -79,10 +62,6 @@ class Request {
   override def toString() : String = {
     s"Lambda Request: sparkS3Bucket=$sparkS3Bucket\n" +
       s"\t\tsparkS3Key=$sparkS3Key\n" +
-      s"\t\thadoop2S3Bucket=$hadoop2S3Bucket\n" +
-      s"\t\thadoop2S3Key=$hadoop2S3Key\n" +
-      s"\t\thive12S3Bucket=$hive12S3Bucket\n" +
-      s"\t\thive12S3Key=$hive12S3Key\n" +
       s"\t\tsparkDriverHostname=$sparkDriverHostname\n" +
       s"\t\tsparkDriverPort=$sparkDriverPort\n" +
       s"\t\tsparkCommandLine=$sparkCommandLine\n"
@@ -92,10 +71,6 @@ class Request {
 case class LambdaRequestPayload (
   sparkS3Bucket: String,
   sparkS3Key: String,
-  hadoop2S3Bucket: String,
-  hadoop2S3Key: String,
-  hive12S3Bucket: String,
-  hive12S3Key: String,
   sparkDriverHostname: String,
   sparkDriverPort: String,
   sparkCommandLine: String,
@@ -113,7 +88,7 @@ class Response {
 }
 
 trait LambdaExecutorService {
-  @LambdaFunction(functionName = "get_spark_from_s3_unusable_now_across_vpcs")
+  @LambdaFunction(functionName = "spark-lambda")
   def runExecutor(request: Request) : Response
 }
 
@@ -127,7 +102,14 @@ private[spark] class LambdaSchedulerBackend(
   extends CoarseGrainedSchedulerBackend(scheduler, sc.env.rpcEnv)
   with Logging {
 
-  val lambdaFunctionName = sc.conf.get("spark.lambda.function.name", "get_spark_from_s3")
+  val lambdaBucket = Option(sc.getConf.get("spark.lambda.s3.bucket"))
+
+  if (!lambdaBucket.isDefined) {
+    throw new Exception(s"spark.lambda.s3.bucket should" +
+      s" have a valid S3 bucket name (eg: s3://lambda) having Spark binaries")
+  }
+
+  val lambdaFunctionName = sc.conf.get("spark.lambda.function.name", "spark-lambda")
   val s3SparkVersion = sc.conf.get("spark.lambda.spark.software.version", "LATEST")
   var numExecutorsExpected = 0
   var numExecutorsRegistered = new AtomicInteger(0)
@@ -147,12 +129,9 @@ private[spark] class LambdaSchedulerBackend(
   clientConfig.setRequestTimeout(345680)
   clientConfig.setSocketTimeout(345681)
 
-  val lambdaBucket = Option(sc.getConf.get("spark.lambda.s3.bucket"))
-
-  if (!lambdaBucket.isDefined) {
-    throw new Exception(s"spark.lambda.s3.bucket should" +
-      s" have a valid S3 bucket name having Spark binaries")
-  }
+  val defaultClasspath = s"/tmp/lambda/spark/jars/*,/tmp/lambda/spark/conf/*"
+  val lambdaClasspathStr = sc.conf.get("spark.lambda.classpath", defaultClasspath)
+  val lambdaClasspath = lambdaClasspathStr.split(",").map(_.trim).mkString(":")
 
   val lambdaClient = AWSLambdaClientBuilder
                         .standard()
@@ -213,29 +192,10 @@ private[spark] class LambdaSchedulerBackend(
       (1 to newExecutorsNeeded).foreach { x =>
         val hostname = sc.env.rpcEnv.address.host
         val port = sc.env.rpcEnv.address.port.toString
-        val classpathSeq = Seq("spark/assembly/target/scala-2.11/jars/*",
-          "spark/conf",
-          "hadoop2/share/hadoop/*",
-          "hadoop2/share/hadoop/common/lib/*",
-          "hadoop2/share/hadoop/common/*",
-          "hadoop2/share/hadoop/hdfs",
-          "hadoop2/share/hadoop/hdfs/lib/*",
-          "hadoop2/share/hadoop/hdfs/*",
-          "hadoop2/share/hadoop/yarn/lib/*",
-          "hadoop2/share/hadoop/yarn/*",
-          "hadoop2/share/hadoop/mapreduce/*",
-          "hadoop2/share/hadoop/tools/lib/*",
-          "hadoop2/share/hadoop/tools/*",
-          "hadoop2/share/hadoop/qubole/lib/*",
-          "hadoop2/share/hadoop/qubole/*",
-          "hadoop2/etc/hadoop/*",
-          "hive1.2/lib/*"
-        )
-        val classpaths = classpathSeq.map(x => s"/tmp/lambda/$x").mkString(":")
         val currentExecutorId = executorId.addAndGet(1)
         val containerId = applicationId() + "_%08d".format(currentExecutorId)
 
-        val javaPartialCommandLine = s"java -cp ${classpaths} " +
+        val javaPartialCommandLine = s"java -cp ${lambdaClasspath} " +
             s"-server -Xmx${lambdaContainerMemory}m " +
             "-Djava.net.preferIPv4Stack=true " +
             s"-Dspark.driver.port=${port} " +
@@ -248,19 +208,13 @@ private[spark] class LambdaSchedulerBackend(
             "--hostname LAMBDA " +
             "--cores 1 " +
             s"--app-id ${applicationId()} " +
-            s"--container-id ${containerId} " +
-            s"--container-size ${lambdaContainerMemory} " +
-            "--user-class-path file:/tmp/lambda/* "
+            s"--user-class-path file:/tmp/lambda/* "
 
         val commandLine = javaPartialCommandLine + executorPartialCommandLine
 
         val request = new LambdaRequestPayload(
-          sparkS3Bucket = lambdaBucket.get,
-          sparkS3Key = s"lambda/spark-small-${s3SparkVersion}.zip",
-          hadoop2S3Bucket = lambdaBucket.get,
-          hadoop2S3Key = s"lambda/hadoop2-small-${s3SparkVersion}.zip",
-          hive12S3Bucket = lambdaBucket.get,
-          hive12S3Key = s"lambda/hive1.2-small-${s3SparkVersion}.zip",
+          sparkS3Bucket = lambdaBucket.get.split("/").last,
+          sparkS3Key = s"lambda/spark-lambda-${s3SparkVersion}.zip",
           sparkDriverHostname = hostname,
           sparkDriverPort = port,
           sparkCommandLine = commandLine,
@@ -349,7 +303,7 @@ private[spark] class LambdaSchedulerBackend(
     listenerBus.addListener(this)
 
     override def onExecutorAdded(event: SparkListenerExecutorAdded) {
-      logInfo(s"LAMBDA: 10100: onExecutorAdded: $event")
+      logDebug(s"LAMBDA: 10100: onExecutorAdded: $event")
       logDebug(s"LAMBDA: 10100.1: onExecutorAdded: ${event.executorInfo.executorHost}")
       logDebug(s"LAMBDA: 10100.2: ${numExecutorsRegistered.get}")
       logDebug(s"LAMBDA: 10100.4: ${numLambdaCallsPending.get}")
@@ -358,7 +312,7 @@ private[spark] class LambdaSchedulerBackend(
       numExecutorsRegistered.addAndGet(1)
     }
     override def onExecutorRemoved(event: SparkListenerExecutorRemoved): Unit = {
-      logInfo(s"LAMBDA: 10101: onExecutorRemoved: $event")
+      logDebug(s"LAMBDA: 10101: onExecutorRemoved: $event")
       logDebug(s"LAMBDA: 10101.2: $numExecutorsRegistered")
       logDebug(s"LAMBDA: 10101.4: ${numLambdaCallsPending.get}")
       liveExecutors.remove(event.executorId)
@@ -402,10 +356,10 @@ private[spark] class LambdaSchedulerBackend(
                                       conf: SparkConf,
                                       numExecutors: Int = DEFAULT_NUMBER_EXECUTORS): Int = {
     if (Utils.isDynamicAllocationEnabled(conf)) {
-      val minNumExecutors = conf.getInt("spark.dynamicAllocation.minExecutors", 0)
+      val minNumExecutors = conf.get(DYN_ALLOCATION_MIN_EXECUTORS)
       val initialNumExecutors =
         Utils.getDynamicAllocationInitialExecutors(conf)
-      val maxNumExecutors = conf.getInt("spark.dynamicAllocation.maxExecutors", Int.MaxValue)
+      val maxNumExecutors = conf.get(DYN_ALLOCATION_MAX_EXECUTORS)
       require(initialNumExecutors >= minNumExecutors && initialNumExecutors <= maxNumExecutors,
         s"initial executor number $initialNumExecutors must between min executor number " +
           s"$minNumExecutors and max executor number $maxNumExecutors")
