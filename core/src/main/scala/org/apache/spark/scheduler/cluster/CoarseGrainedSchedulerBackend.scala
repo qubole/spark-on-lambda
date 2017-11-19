@@ -24,11 +24,10 @@ import javax.annotation.concurrent.GuardedBy
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
-
 import org.apache.spark.{ExecutorAllocationClient, SparkEnv, SparkException, TaskState}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rpc._
-import org.apache.spark.scheduler._
+import org.apache.spark.scheduler.{ExecutorLossReason, _}
 import org.apache.spark.scheduler.cluster.CoarseGrainedClusterMessages._
 import org.apache.spark.scheduler.cluster.CoarseGrainedSchedulerBackend.ENDPOINT_NAME
 import org.apache.spark.util.{RpcUtils, SerializableBuffer, ThreadUtils, Utils}
@@ -651,8 +650,20 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
    * Kill the given list of executors through the cluster manager.
    * @return whether the kill request is acknowledged.
    */
-  protected def doKillExecutors(executorIds: Seq[String]): Future[Boolean] =
-    Future.successful(false)
+  protected def doKillExecutors(executorIds: Seq[String]): Future[Boolean] = {
+    if (this.isInstanceOf[LambdaSchedulerBackend]) {
+      val reason = "Driver asked to stop executor"
+      executorIds.foreach {
+        executorId => {
+          executorDataMap.get(executorId).foreach(_.executorEndpoint.send(StopExecutor))
+          removeExecutor(executorId, new ExecutorLossReason(reason))
+        }
+      }
+      Future.successful(true)
+    } else {
+      Future.successful(false)
+    }
+  }
 }
 
 private[spark] object CoarseGrainedSchedulerBackend {

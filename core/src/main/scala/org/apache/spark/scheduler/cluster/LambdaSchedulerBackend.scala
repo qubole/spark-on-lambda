@@ -280,18 +280,20 @@ private[spark] class LambdaSchedulerBackend(
   override def doKillExecutors(executorIds: Seq[String]): Future[Boolean] = {
     // TODO: Right now not implemented
     logDebug(s"LAMBDA: 10200: doKillExecutors: $executorIds")
+    val (activeExecutors, pendingExecutors) =
+      executorIds.partition(executorId => !pendingLambdaRequests.contains(executorId))
     Future {
-      executorIds.foreach { x =>
+      pendingExecutors.foreach { x =>
         if (pendingLambdaRequests.contains(x)) {
           logDebug(s"LAMBDA: 10201: doKillExecutors: Interrupting $x")
           val thread = pendingLambdaRequests(x)
           pendingLambdaRequests.remove(x)
           thread.interrupt()
           logDebug(s"LAMBDA: 10202: ${thread.getState}")
-        } else {
-          logDebug(s"LAMBDA: 10203: doKillExecutor: $x is gone")
         }
       }
+
+      super.doKillExecutors(activeExecutors)
       true
     }
   }
