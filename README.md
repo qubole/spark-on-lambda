@@ -1,104 +1,78 @@
-# Apache Spark
+# Spark on Lambda - README
+----------------------------------------
 
-Spark is a fast and general cluster computing system for Big Data. It provides
-high-level APIs in Scala, Java, Python, and R, and an optimized engine that
-supports general computation graphs for data analysis. It also supports a
-rich set of higher-level tools including Spark SQL for SQL and DataFrames,
-MLlib for machine learning, GraphX for graph processing,
-and Spark Streaming for stream processing.
+AWS Lambda is a Function as a Service which is serverless, scales up quickly and bills usage at 100ms granularity. We thought it would be interesting to see if we can get Apache Spark run on Lambda. This is an interesting idea we had, in order to validate we just hacked it into a prototype to see if it works. We were able to make it work making some changes in Spark's scheduler and shuffle areas. Since AWS Lambda has a 5 minute max run time limit, we have to shuffle over an external storage. So we hacked the shuffle parts of Spark code to shuffle over an external storage like S3.
 
-<http://spark.apache.org/>
+This is a prototype and its not battle tested possibly can have bugs. The changes are made against OS Apache Spark-2.1.0 version. We also have a fork of Spark-2.2.0 which has few bugs will be pushed here soon. We welcome contributions from developers.
+
+### For users, who wants to try out:
+
+Bring up an EC2 machine with AWS credentials to invoke lambda function (~/.aws/credentials) in a VPC. Right now we only support credentials file way of loading lambda credentials with AWSLambdaClient. The spark driver will run on this machine. Also configure a security group for this machine.
+
+Spark on Lambda package for driver [s3://public-qubole/lambda/spark-2.1.0-bin-spark-lambda-2.1.0.tgz] - This can be downloaded to an ec2 instance where the driver can be launched as Driver is generally long running needs to run inside an EC2 instance
+
+Create the Lambda function with name spark-lambda from AWS console using the  (https://github.com/qubole/spark-on-lambda/bin/lambda/spark-lambda-os.py) and configure lambda function’s VPC and subnet to be same as that of the EC2 machine. Right now we use private IPs to register with Spark driver but this can be fixed to use public IP there by the Spark driver even can run on Mac or PC or any VM. It would also be nice to have a Docker container having the package which works out of the box.  
+
+Also configure the security group of the lambda function to be the same as that of the EC2 machine. Note: Lambda role should have access to [s3://public-qubole/]
+Also if you want to copy the packages to your bucket, use 
+
+```
+aws s3 cp s3://s3://public-qubole/lambda/spark-lambda-149.zip s3://YOUR_BUCKET/
+aws s3 cp s3://s3://public-qubole/lambda/spark-2.1.0-bin-spark-lambda-2.1.0.tgz s3://YOUR_BUCKET/
+```
+
+Spark on Lambda package for executor to be launched inside lambda [s3://public-qubole/lambda/spark-lambda-149.zip] - This will be used in the lambda (executor) side. In order to use this package on the lambda side, pass spark configs like below:
+		
+        1. spark.lambda.s3.bucket s3://public-qubole/
+        2. spark.lambda.function.name spark-lambda
+        3. spark.lambda.spark.software.version 149
+
+## Launch spark-shell
+
+```
+/usr/lib/spark/bin/spark-shell --conf spark.hadoop.fs.s3n.awsAccessKeyId= --conf spark.hadoop.fs.s3n.awsSecretAccessKey=
+```
+
+## Spark on Lambda configs (spark-defaults.conf)
+
+```
+spark.shuffle.s3.enabled true
+spark.shuffle.s3.bucket s3://  -- Bucket to write shuffle (intermediate) data
+spark.lambda.s3.bucket s3://public-qubole/  
+spark.lambda.concurrent.requests.max 50
+spark.lambda.function.name spark-lambda
+spark.lambda.spark.software.version 149
+spark.hadoop.fs.s3n.impl org.apache.hadoop.fs.s3a.S3AFileSystem
+spark.hadoop.fs.s3.impl org.apache.hadoop.fs.s3a.S3AFileSystem
+spark.hadoop.fs.AbstractFileSystem.s3.impl org.apache.hadoop.fs.s3a.S3A
+spark.hadoop.fs.AbstractFileSystem.s3n.impl org.apache.hadoop.fs.s3a.S3A
+spark.hadoop.fs.AbstractFileSystem.s3a.impl org.apache.hadoop.fs.s3a.S3A
+spark.dynamicAllocation.enabled true
+spark.dynamicAllocation.minExecutors 2
+```
+
+For developers, who wants to make changes:
+
+## To compile
+
+```
+./dev/make-distribution.sh --name spark-lambda-2.1.0 --tgz -Phive -Phadoop-2.7 -Dhadoop.version=2.6.0-qds-0.4.13 -DskipTests 
+```
+
+Due to aws-java-sdk-1.7.4.jar which is used by hadoop-aws.jar and aws-java-sdk-core-1.1.0.jar has compatibility issues, so as of now we have to compile it using Qubole shaded hadoop-aws-2.6.0-qds-0.4.13.jar.
+
+## To create lambda package for executors
+
+```
+bash -x bin/lambda/spark-lambda 149 (spark.lambda.spark.software.version) spark-2.1.0-bin-spark-lambda-2.1.0.tgz [s3://public-qubole/] (this maps to the config value of spark.lambda.s3.bucket)
+```
+
+(spark/bin/lambda/spark-lambda-os.py) is the helper lambda function used to bootstrap lambda environment with necessary Spark packages to run executors. 
+
+Above Lambda function has to be created inside VPC which is same as the EC2 instance where driver is brought up for having communication between Driver and Executors (lambda function)
 
 
-## Online Documentation
+## References
 
-You can find the latest Spark documentation, including a programming
-guide, on the [project web page](http://spark.apache.org/documentation.html).
-This README file only contains basic setup instructions.
+1. http://deploymentzone.com/2015/12/20/s3a-on-spark-on-aws-ec2/
 
-## Building Spark
-
-Spark is built using [Apache Maven](http://maven.apache.org/).
-To build Spark and its example programs, run:
-
-    build/mvn -DskipTests clean package
-
-(You do not need to do this if you downloaded a pre-built package.)
-
-You can build Spark using more than one thread by using the -T option with Maven, see ["Parallel builds in Maven 3"](https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3).
-More detailed documentation is available from the project site, at
-["Building Spark"](http://spark.apache.org/docs/latest/building-spark.html).
-
-For general development tips, including info on developing Spark using an IDE, see 
-[http://spark.apache.org/developer-tools.html](the Useful Developer Tools page).
-
-## Interactive Scala Shell
-
-The easiest way to start using Spark is through the Scala shell:
-
-    ./bin/spark-shell
-
-Try the following command, which should return 1000:
-
-    scala> sc.parallelize(1 to 1000).count()
-
-## Interactive Python Shell
-
-Alternatively, if you prefer Python, you can use the Python shell:
-
-    ./bin/pyspark
-
-And run the following command, which should also return 1000:
-
-    >>> sc.parallelize(range(1000)).count()
-
-## Example Programs
-
-Spark also comes with several sample programs in the `examples` directory.
-To run one of them, use `./bin/run-example <class> [params]`. For example:
-
-    ./bin/run-example SparkPi
-
-will run the Pi example locally.
-
-You can set the MASTER environment variable when running examples to submit
-examples to a cluster. This can be a mesos:// or spark:// URL,
-"yarn" to run on YARN, and "local" to run
-locally with one thread, or "local[N]" to run locally with N threads. You
-can also use an abbreviated class name if the class is in the `examples`
-package. For instance:
-
-    MASTER=spark://host:7077 ./bin/run-example SparkPi
-
-Many of the example programs print usage help if no params are given.
-
-## Running Tests
-
-Testing first requires [building Spark](#building-spark). Once Spark is built, tests
-can be run using:
-
-    ./dev/run-tests
-
-Please see the guidance on how to
-[run tests for a module, or individual tests](http://spark.apache.org/developer-tools.html#individual-tests).
-
-## A Note About Hadoop Versions
-
-Spark uses the Hadoop core library to talk to HDFS and other Hadoop-supported
-storage systems. Because the protocols have changed in different versions of
-Hadoop, you must build Spark against the same version that your cluster runs.
-
-Please refer to the build documentation at
-["Specifying the Hadoop Version"](http://spark.apache.org/docs/latest/building-spark.html#specifying-the-hadoop-version)
-for detailed guidance on building for a particular distribution of Hadoop, including
-building for particular Hive and Hive Thriftserver distributions.
-
-## Configuration
-
-Please refer to the [Configuration Guide](http://spark.apache.org/docs/latest/configuration.html)
-in the online documentation for an overview on how to configure Spark.
-
-## Contributing
-
-Please review the [Contribution to Spark guide](http://spark.apache.org/contributing.html)
-for information on how to get started contributing to the project.

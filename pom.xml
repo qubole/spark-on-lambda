@@ -236,6 +236,11 @@
         <enabled>false</enabled>
       </snapshots>
     </repository>
+    <repository>
+      <id>qubole</id>
+      <name>Qubole Repository</name>
+      <url>https://s3.amazonaws.com/public-qubole/maven/release</url>
+    </repository>
   </repositories>
   <pluginRepositories>
     <pluginRepository>
