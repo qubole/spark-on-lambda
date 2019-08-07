@@ -1,3 +1,4 @@
+# Note: "This repo contains Vulnerable Code, as such should not be used for any purpose whatsoever."
 # Spark on Lambda - README
 ----------------------------------------
 
